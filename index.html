@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edgy Trading Hub</title>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Ant Design -->
+    <script src="https://unpkg.com/dayjs/dayjs.min.js"></script>
+    <link href="https://unpkg.com/antd/dist/reset.css" rel="stylesheet" />
+    <script src="https://unpkg.com/antd/dist/antd.min.js"></script>
+    <!-- Ant Icons -->
+    <script src="https://unpkg.com/@ant-design/icons/dist/index.umd.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        .logo {
+            height: 32px;
+            margin: 16px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-weight: bold;
+            font-size: 16px;
+            letter-spacing: 1px;
+        }
+
+        .site-layout .site-layout-background {
+            background: #f0f2f5;
+        }
+
+        .card-icon {
+            font-size: 24px;
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .icon-blue {
+            color: #1677ff;
+            background: #e6f4ff;
+        }
+
+        .icon-green {
+            color: #52c41a;
+            background: #f6ffed;
+        }
+
+        .icon-purple {
+            color: #722ed1;
+            background: #f9f0ff;
+        }
+
+        .premium-card {
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+            border: none;
+            transition: all 0.3s;
+        }
+
+        .premium-card:hover {
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            transform: translateY(-2px);
+        }
+
+        .dashboard-header {
+            background: #fff;
+            padding: 0 24px;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 1px 4px rgba(0, 21, 41, .08);
+            z-index: 1;
+            position: relative;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        try {
+            const { Layout, Menu, Typography, Card, Row, Col, Table, Tag, Statistic, ConfigProvider, theme, Progress, Button, Modal, Form, Input, InputNumber, Space, message, Select } = antd;
+            const { Header, Content, Sider } = Layout;
+            const { Title, Text } = Typography;
+
+            // Fallback for icons if AntDesignIcons is used instead of icons
+            const IconsObj = typeof icons !== 'undefined' ? icons : (window.icons || window.AntDesignIcons || {});
+            const { DashboardOutlined, LineChartOutlined, WalletOutlined, BankOutlined, RiseOutlined, EditOutlined, UploadOutlined, PlusOutlined, UserOutlined, DeleteOutlined, FallOutlined, DollarOutlined, BarChartOutlined, CheckCircleOutlined, LockOutlined, LogoutOutlined } = IconsObj;
+
+            const PRIMARY_COLOR = '#001529'; // Dark blue matching standard sidebar
+
+            const initialData = [
+                { key: '1', name: 'FTDFYSLX50149603034', company: 'Tradeify', type: 'Evaluación', balance: 51250, pnl: 1250, status: 'Activa', initial: 50000, goal: 3000 }
+            ];
+
+            const App = () => {
+                const [accounts, setAccounts] = React.useState(() => {
+                    const saved = localStorage.getItem('edgy-futures-accounts');
+                    if (saved) {
+                        try { return JSON.parse(saved); } catch (e) { return initialData; }
+                    }
+                    return initialData;
+                });
+
+                const [transactions, setTransactions] = React.useState(() => {
+                    const saved = localStorage.getItem('edgy-futures-accounting');
+                    if (saved) {
+                        try { return JSON.parse(saved); } catch (e) { return []; }
+                    }
+                    return [];
+                });
+
+                React.useEffect(() => {
+                    localStorage.setItem('edgy-futures-accounts', JSON.stringify(accounts));
+                }, [accounts]);
+
+                React.useEffect(() => {
+                    localStorage.setItem('edgy-futures-accounting', JSON.stringify(transactions));
+                }, [transactions]);
+
+                const [isAuthenticated, setIsAuthenticated] = React.useState(false);
+                const [loginError, setLoginError] = React.useState(false);
+
+                const handleLogin = (values) => {
+                    if (values.username === 'admin' && values.password === 'futures2026') {
+                        setIsAuthenticated(true);
+                        setLoginError(false);
+                        message.success('Acceso autorizado. Bienvenido.');
+                    } else {
+                        setLoginError(true);
+                        message.error('Usuario o contraseña incorrectos');
+                    }
+                };
+
+                const [isModalVisible, setIsModalVisible] = React.useState(false);
+                const [isNewModalVisible, setIsNewModalVisible] = React.useState(false);
+                const [isExpenseModalVisible, setIsExpenseModalVisible] = React.useState(false);
+                const [isIncomeModalVisible, setIsIncomeModalVisible] = React.useState(false);
+
+                const [editingAccount, setEditingAccount] = React.useState(null);
+                const [form] = Form.useForm();
+                const [newForm] = Form.useForm();
+                const [expenseForm] = Form.useForm();
+                const [incomeForm] = Form.useForm();
+                const fileInputRef = React.useRef(null);
+
+                // Watch currency to show/hide exchange rate
+                const expenseCurrency = Form.useWatch('currency', expenseForm);
+                const expenseCategory = Form.useWatch('category', expenseForm);
+
+                const handleEdit = (record) => {
+                    setEditingAccount(record);
+                    form.setFieldsValue({
+                        name: record.name,
+                        company: record.company,
+                        type: record.type,
+                        balance: record.balance,
+                        goal: record.goal
+                    });
+                    setIsModalVisible(true);
+                };
+
+                const handleModalOk = () => {
+                    form.validateFields().then((values) => {
+                        const updatedAccounts = accounts.map(acc => {
+                            if (acc.key === editingAccount.key) {
+                                const initialBalance = acc.initial || (acc.balance - acc.pnl);
+                                const newBalance = values.balance;
+                                const newPnl = newBalance - initialBalance;
+                                let newStatus = newBalance >= initialBalance ? 'Activa' : (newBalance < initialBalance - 1000 ? 'Peligro' : 'Advertencia');
+                                return { ...acc, name: values.name, company: values.company, type: values.type, balance: newBalance, pnl: newPnl, status: newStatus, goal: values.goal };
+                            }
+                            return acc;
+                        });
+                        setAccounts(updatedAccounts);
+                        setIsModalVisible(false);
+                        message.success('Cuenta actualizada correctamente');
+                    });
+                };
+
+                const handleModalCancel = () => {
+                    setIsModalVisible(false);
+                };
+
+                const handleDeleteAccount = () => {
+                    if (editingAccount) {
+                        Modal.confirm({
+                            title: '¿Estás seguro de eliminar esta cuenta?',
+                            content: `Se eliminará permanentemente la cuenta "${editingAccount.name}".`,
+                            okText: 'Sí, Eliminar',
+                            okType: 'danger',
+                            cancelText: 'Cancelar',
+                            onOk() {
+                                const updatedAccounts = accounts.filter(acc => acc.key !== editingAccount.key);
+                                setAccounts(updatedAccounts);
+                                setIsModalVisible(false);
+                                message.success(`Cuenta "${editingAccount.name}" eliminada.`);
+                            },
+                        });
+                    }
+                };
+
+                const handleNewModalOk = () => {
+                    newForm.validateFields().then(values => {
+                        const newAccount = {
+                            key: Date.now().toString(),
+                            name: values.name,
+                            company: values.company,
+                            type: values.type,
+                            balance: values.initial,
+                            pnl: 0,
+                            initial: values.initial,
+                            goal: values.goal,
+                            status: 'Activa'
+                        };
+                        setAccounts([...accounts, newAccount]);
+                        setIsNewModalVisible(false);
+                        newForm.resetFields();
+                        message.success(`Cuenta "${values.name}" creada exitosamente`);
+                    });
+                };
+
+                const handleExpenseOk = () => {
+                    expenseForm.validateFields().then(values => {
+                        let exchangeRate = values.currency === 'ARS' ? (values.exchangeRate || 1) : 1;
+                        let finalUsdAmount = values.currency === 'ARS' ? (values.originalAmount / exchangeRate) : values.originalAmount;
+
+                        const newTx = {
+                            id: Date.now().toString(),
+                            type: 'EXPENSE',
+                            category: values.category,
+                            description: values.description,
+                            currency: values.currency,
+                            originalAmount: values.originalAmount,
+                            exchangeRate: exchangeRate,
+                            amount: finalUsdAmount,
+                            usefulLifeMonths: values.category === 'Activos Amortizables' ? values.usefulLifeMonths : null,
+                            date: new Date().toISOString()
+                        };
+                        setTransactions([...transactions, newTx]);
+                        setIsExpenseModalVisible(false);
+                        expenseForm.resetFields();
+                        message.success('Gasto registrado correctamente');
+                    });
+                };
+
+                const handleIncomeOk = () => {
+                    incomeForm.validateFields().then(values => {
+                        const newTx = {
+                            id: Date.now().toString(),
+                            type: 'INCOME',
+                            category: 'Retiro',
+                            sourceAccount: values.sourceAccount,
+                            description: values.description,
+                            currency: 'USD',
+                            originalAmount: values.amount,
+                            exchangeRate: 1,
+                            amount: values.amount,
+                            date: new Date().toISOString()
+                        };
+                        setTransactions([...transactions, newTx]);
+                        setIsIncomeModalVisible(false);
+                        incomeForm.resetFields();
+                        message.success('Cobro/Retiro registrado correctamente');
+                    });
+                };
+
+                const handleImportCsv = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (evt) => {
+                        const text = evt.target.result;
+                        // Dividir por líneas y por punto y coma (;)
+                        const rows = text.split('\n').filter(row => row.trim() !== '').map(row => row.split(';').map(cell => cell.trim().replace(/['"]/g, '')));
+
+                        if (rows.length < 2) {
+                            message.error('El archivo CSV parece estar vacío o no tiene el formato correcto.');
+                            return;
+                        }
+
+                        // Obtener los índices de las columnas clave
+                        const headers = rows[0].map(h => h.toLowerCase().trim());
+                        const nameIndex = headers.findIndex(h => h === 'display name' || h.includes('display name'));
+
+                        // Buscar coincidencia exacta para 'realized pnl' para evitar 'gross realized pnl'
+                        const pnlIndex = headers.findIndex(h => h === 'realized pnl' || h === 'net realized pnl');
+
+                        if (nameIndex === -1 || pnlIndex === -1) {
+                            message.error('No se encontraron las columnas "Display name" o "Realized PnL" en el CSV.');
+                            return;
+                        }
+
+                        let updatedCount = 0;
+                        const updatedAccounts = accounts.map(acc => {
+                            const accNameLower = acc.name.toLowerCase();
+                            // Buscar una fila que coincida con el nombre de la cuenta usando el índice 'nameIndex'
+                            const matchingRow = rows.slice(1).find(row => row[nameIndex] && (row[nameIndex].toLowerCase().includes(accNameLower) || accNameLower.includes(row[nameIndex].toLowerCase())));
+
+                            if (matchingRow && matchingRow[pnlIndex]) {
+                                // Convertir el valor de PnL usando coma (,) como decimal
+                                const pnlStr = matchingRow[pnlIndex].replace(/[^\d,-]/g, '').replace(',', '.');
+                                const parsedPnl = parseFloat(pnlStr);
+
+                                if (!isNaN(parsedPnl)) {
+                                    // Balance New (el nuevo balance) sería el balance base que teníamos + el nuevo PnL realizado.
+                                    // Para evitar sobreescribir repetidamente si se carga varias veces en el día, consideramos que el PnL entra a modificar el Balance.
+                                    const initial = acc.initial || (acc.balance - acc.pnl);
+                                    let newStatus = acc.balance + parsedPnl >= initial ? 'Activa' : ((acc.balance + parsedPnl) < initial - 1000 ? 'Peligro' : 'Advertencia');
+
+                                    updatedCount++;
+                                    return { ...acc, pnl: parsedPnl, status: newStatus };
+                                }
+                            }
+                            return acc;
+                        });
+
+                        if (updatedCount > 0) {
+                            setAccounts(updatedAccounts);
+                            message.success(`¡CSV de NinjaTrader importado! ${updatedCount} cuentas actualizadas con nuevos valores de P&L Diario.`);
+                        } else {
+                            message.warning('No se detectaron cuentas NinjaTrader que coincidan. Revisa los nombres en la columna "Display name".');
+                        }
+                        e.target.value = null;
+                    };
+                    reader.readAsText(file);
+                };
+
+                const columns = [
+                    {
+                        title: 'Nombre de Cuenta',
+                        dataIndex: 'name',
+                        key: 'name',
+                        render: (text) => <strong>{text}</strong>,
+                    },
+                    {
+                        title: 'Compañía',
+                        dataIndex: 'company',
+                        key: 'company',
+                        render: (company) => <span>{company}</span>
+                    },
+                    {
+                        title: 'Balance',
+                        dataIndex: 'balance',
+                        key: 'balance',
+                        render: (val) => `$${val.toLocaleString()}`
+                    },
+                    {
+                        title: 'P&L Diario',
+                        dataIndex: 'pnl',
+                        key: 'pnl',
+                        render: (pnl) => (
+                            <span style={{ color: pnl >= 0 ? '#3f8600' : '#cf1322', fontWeight: 600 }}>
+                                {pnl >= 0 ? '+' : '-'}${Math.abs(pnl).toLocaleString()}
+                            </span>
+                        )
+                    },
+                    {
+                        title: 'Balance New',
+                        key: 'balanceNew',
+                        render: (_, record) => {
+                            const balanceNew = record.balance + record.pnl;
+                            return <strong>${balanceNew.toLocaleString()}</strong>;
+                        }
+                    },
+                    {
+                        title: 'Progreso',
+                        key: 'progress',
+                        render: (_, record) => {
+                            const initial = record.initial || (record.balance - record.pnl);
+                            const balanceNew = record.balance + record.pnl;
+                            const goal = record.goal || 2500;
+                            const profit = balanceNew - initial;
+
+                            let percent = (profit / goal) * 100;
+                            const exactPercent = percent.toFixed(1);
+
+                            if (percent < 0) percent = 0;
+                            if (percent > 100) percent = 100;
+
+                            return (
+                                <div style={{ width: 140 }}>
+                                    <Progress
+                                        percent={percent}
+                                        format={() => `${exactPercent}%`}
+                                        status={profit >= goal ? 'success' : (profit < 0 ? 'exception' : 'active')}
+                                        strokeColor={profit >= 0 ? PRIMARY_COLOR : undefined}
+                                    />
+                                </div>
+                            );
+                        }
+                    },
+                    {
+                        title: 'Estado',
+                        key: 'status',
+                        dataIndex: 'status',
+                        render: (status) => {
+                            const color = status === 'Activa' ? 'success' : (status === 'Advertencia' ? 'warning' : 'error');
+                            return <Tag color={color}>{status}</Tag>;
+                        }
+                    },
+                    {
+                        title: 'Acciones',
+                        key: 'actions',
+                        render: (_, record) => (
+                            <Button type="primary" size="small" ghost icon={EditOutlined && <EditOutlined />} onClick={() => handleEdit(record)}>
+                                Editar
+                            </Button>
+                        )
+                    }
+                ];
+
+                const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
+                const totalPnl = accounts.reduce((sum, acc) => sum + acc.pnl, 0);
+
+                // Financial Calculations
+                const today = new Date();
+                let inversionFlota = 0;
+                let valorActivosBruto = 0;
+                let depreciacionAcumulada = 0;
+                let gastosServicios = 0;
+                let totalIngresos = 0;
+
+                transactions.forEach(t => {
+                    if (t.type === 'INCOME') {
+                        totalIngresos += t.amount;
+                    } else if (t.type === 'EXPENSE') {
+                        if (t.category === 'Capital de Trabajo') {
+                            inversionFlota += t.amount;
+                        } else if (t.category === 'Servicios') {
+                            gastosServicios += t.amount;
+                        } else if (t.category === 'Activos Amortizables') {
+                            valorActivosBruto += t.amount;
+                            if (t.usefulLifeMonths) {
+                                const txDate = new Date(t.date);
+                                const diffTime = Math.abs(today - txDate);
+                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                const diffMonths = diffDays / 30.44; // Approx months
+
+                                const monthlyDepreciation = t.amount / t.usefulLifeMonths;
+                                const totalDepreciated = Math.min(t.amount, diffMonths * monthlyDepreciation);
+                                depreciacionAcumulada += totalDepreciated;
+                            } else {
+                                depreciacionAcumulada += t.amount; // Depreciate immediately
+                            }
+                        }
+                    }
+                });
+
+                const totalGastosReales = inversionFlota + gastosServicios + depreciacionAcumulada;
+                const beneficioNetoReal = totalIngresos - totalGastosReales;
+                const valorActivosNeto = valorActivosBruto - depreciacionAcumulada;
+
+                if (!isAuthenticated) {
+                    return (
+                        <ConfigProvider theme={{ token: { colorPrimary: PRIMARY_COLOR, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" } }}>
+                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#001529' }}>
+                                <Card style={{ width: 350, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', borderRadius: 12, border: 'none' }}>
+                                    <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                                        <h2 style={{ color: PRIMARY_COLOR, margin: 0, paddingBottom: 8 }}>EDGY FUTURES HUB</h2>
+                                        <Text type="secondary">Acceso Restringido</Text>
+                                    </div>
+                                    <Form onFinish={handleLogin} layout="vertical">
+                                        <Form.Item name="username" rules={[{ required: true, message: 'Ingrese su usuario' }]}>
+                                            <Input prefix={<UserOutlined style={{ color: 'rgba(0,0,0,.25)' }} />} placeholder="Usuario" size="large" />
+                                        </Form.Item>
+                                        <Form.Item name="password" rules={[{ required: true, message: 'Ingrese su contraseña' }]}>
+                                            <Input.Password prefix={<LockOutlined style={{ color: 'rgba(0,0,0,.25)' }} />} placeholder="Contraseña" size="large" />
+                                        </Form.Item>
+                                        <Button type="primary" htmlType="submit" size="large" block style={{ marginTop: 8 }}>
+                                            Ingresar
+                                        </Button>
+                                    </Form>
+                                </Card>
+                            </div>
+                        </ConfigProvider>
+                    );
+                }
+
+                return (
+                    <ConfigProvider
+                        theme={{
+                            token: {
+                                colorPrimary: PRIMARY_COLOR,
+                                fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                            },
+                        }}
+                    >
+                        <Layout style={{ minHeight: '100vh' }}>
+                            <Sider width={250} theme="dark" style={{ background: PRIMARY_COLOR }}>
+                                <div className="logo">
+                                    EDGY FUTURES HUB
+                                </div>
+                                <Menu
+                                    theme="dark"
+                                    style={{ background: PRIMARY_COLOR }}
+                                    mode="inline"
+                                    defaultSelectedKeys={['1']}
+                                    items={[
+                                        { key: '1', icon: DashboardOutlined && <DashboardOutlined />, label: 'Dashboard' },
+                                        { key: '2', icon: LineChartOutlined && <LineChartOutlined />, label: 'Análisis de Trading' },
+                                        { key: '3', icon: BankOutlined && <BankOutlined />, label: 'Cuentas' },
+                                        { key: '4', icon: WalletOutlined && <WalletOutlined />, label: 'Retiros' },
+                                        { type: 'divider' },
+                                        { key: 'logout', icon: LogoutOutlined && <LogoutOutlined />, label: 'Cerrar Sesión', danger: true }
+                                    ]}
+                                    onClick={({ key }) => {
+                                        if (key === 'logout') {
+                                            setIsAuthenticated(false);
+                                            message.info('Sesión cerrada.');
+                                        }
+                                    }}
+                                />
+                            </Sider>
+                            <Layout className="site-layout" style={{ background: '#f5f7fa' }}>
+                                <Header className="dashboard-header">
+                                    <Title level={4} style={{ margin: 0 }}>Panel Principal</Title>
+                                </Header>
+                                <Content style={{ margin: '24px 24px', overflow: 'initial' }}>
+                                    <div style={{ marginBottom: 24 }}>
+                                        <Title level={2} style={{ marginBottom: 4 }}>Hola, Carlos 👋</Title>
+                                        <Text type="secondary" style={{ fontSize: 16 }}>Aquí tienes el resumen de tu actividad de hoy.</Text>
+                                    </div>
+
+                                    <Row gutter={24} style={{ marginBottom: 24 }}>
+                                        <Col xs={24} sm={8}>
+                                            <Card className="premium-card" style={{ borderLeft: '4px solid #faad14' }}>
+                                                <Statistic
+                                                    title={<span style={{ fontSize: 14, fontWeight: 500 }}>Inversión en Flota</span>}
+                                                    value={inversionFlota}
+                                                    precision={2}
+                                                    valueStyle={{ fontWeight: 700, fontSize: 24 }}
+                                                    prefix="$"
+                                                />
+                                            </Card>
+                                        </Col>
+                                        <Col xs={24} sm={8}>
+                                            <Card className="premium-card" style={{ borderLeft: '4px solid #722ed1' }}>
+                                                <Statistic
+                                                    title={<span style={{ fontSize: 14, fontWeight: 500 }}>Valor de Activos (Neto)</span>}
+                                                    value={valorActivosNeto}
+                                                    precision={2}
+                                                    valueStyle={{ fontWeight: 700, fontSize: 24 }}
+                                                    prefix="$"
+                                                />
+                                            </Card>
+                                        </Col>
+                                        <Col xs={24} sm={8}>
+                                            <Card className="premium-card" style={{ borderLeft: beneficioNetoReal >= 0 ? '4px solid #52c41a' : '4px solid #ff4d4f' }}>
+                                                <Statistic
+                                                    title={<span style={{ fontSize: 14, fontWeight: 500 }}>Beneficio Neto Real</span>}
+                                                    value={beneficioNetoReal}
+                                                    precision={2}
+                                                    valueStyle={{ color: beneficioNetoReal >= 0 ? '#3f8600' : '#cf1322', fontWeight: 700, fontSize: 24 }}
+                                                    prefix="$"
+                                                />
+                                            </Card>
+                                        </Col>
+                                    </Row>
+
+                                    <Title level={5} style={{ marginBottom: 16, marginTop: 32, color: PRIMARY_COLOR }}>Métricas de Cuentas de Trading</Title>
+                                    <Row gutter={24} style={{ marginBottom: 24 }}>
+                                        <Col xs={24} sm={8}>
+                                            <Card className="premium-card">
+                                                <Statistic
+                                                    title={<span style={{ fontSize: 13, fontWeight: 500 }}>Balance Total de Flota</span>}
+                                                    value={totalBalance}
+                                                    precision={2}
+                                                    valueStyle={{ color: PRIMARY_COLOR, fontWeight: 700, fontSize: 24 }}
+                                                    prefix="$"
+                                                />
+                                            </Card>
+                                        </Col>
+                                        <Col xs={24} sm={8}>
+                                            <Card className="premium-card">
+                                                <Statistic
+                                                    title={<span style={{ fontSize: 13, fontWeight: 500 }}>PnL Diario Neto</span>}
+                                                    value={totalPnl}
+                                                    precision={2}
+                                                    valueStyle={{ color: totalPnl >= 0 ? '#3f8600' : '#cf1322', fontWeight: 700, fontSize: 24 }}
+                                                    prefix={RiseOutlined && <RiseOutlined />}
+                                                    suffix="$"
+                                                />
+                                            </Card>
+                                        </Col>
+                                        <Col xs={24} sm={8}>
+                                            <Card className="premium-card">
+                                                <Statistic
+                                                    title={<span style={{ fontSize: 13, fontWeight: 500 }}>Cuentas Activas</span>}
+                                                    value={accounts.length}
+                                                    valueStyle={{ color: '#1677ff', fontWeight: 700, fontSize: 24 }}
+                                                    prefix={UserOutlined && <UserOutlined />}
+                                                />
+                                            </Card>
+                                        </Col>
+                                    </Row>
+
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 24, gap: '8px', flexWrap: 'wrap' }}>
+                                        <Space wrap>
+                                            <Button
+                                                danger
+                                                icon={FallOutlined && <FallOutlined />}
+                                                onClick={() => setIsExpenseModalVisible(true)}
+                                            >
+                                                Registrar Gasto
+                                            </Button>
+                                            <Button
+                                                style={{ color: '#52c41a', borderColor: '#52c41a' }}
+                                                icon={DollarOutlined && <DollarOutlined />}
+                                                onClick={() => setIsIncomeModalVisible(true)}
+                                            >
+                                                Registrar Cobro
+                                            </Button>
+
+                                            <span style={{ borderLeft: '1px solid #d9d9d9', height: '32px', margin: '0 8px' }}></span>
+
+                                            <input
+                                                type="file"
+                                                accept=".csv"
+                                                ref={fileInputRef}
+                                                style={{ display: 'none' }}
+                                                onChange={handleImportCsv}
+                                            />
+                                            <Button
+                                                icon={UploadOutlined && <UploadOutlined />}
+                                                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                                            >
+                                                Importar CSV NinjaTrader
+                                            </Button>
+                                            <Button
+                                                type="primary"
+                                                icon={PlusOutlined && <PlusOutlined />}
+                                                onClick={() => setIsNewModalVisible(true)}
+                                            >
+                                                Nueva Cuenta
+                                            </Button>
+                                            <Button
+                                                danger
+                                                onClick={() => {
+                                                    if (window.confirm('¿Estás seguro de que quieres limpiar el LocalStorage y reiniciar las cuentas?')) {
+                                                        localStorage.removeItem('edgy-futures-accounts');
+                                                        window.location.reload();
+                                                    }
+                                                }}
+                                            >
+                                                Resetear Todo
+                                            </Button>
+                                        </Space>
+                                    </div>
+
+                                    {accounts.filter(a => a.type === 'Evaluación').length > 0 && (
+                                        <Card title={<span style={{ fontSize: 18, color: '#1677ff' }}>Evaluaciones</span>} className="premium-card" style={{ marginBottom: 24 }}>
+                                            <Table
+                                                columns={columns}
+                                                dataSource={accounts.filter(a => a.type === 'Evaluación')}
+                                                pagination={false}
+                                                rowClassName={() => 'table-row-hover'}
+                                                style={{ overflowX: 'auto' }}
+                                            />
+                                        </Card>
+                                    )}
+
+                                    {accounts.filter(a => a.type === 'Master').length > 0 && (
+                                        <Card title={<span style={{ fontSize: 18, color: '#722ed1' }}>Cuentas Master</span>} className="premium-card" style={{ marginBottom: 24 }}>
+                                            <Table
+                                                columns={columns}
+                                                dataSource={accounts.filter(a => a.type === 'Master')}
+                                                pagination={false}
+                                                rowClassName={() => 'table-row-hover'}
+                                                style={{ overflowX: 'auto' }}
+                                            />
+                                        </Card>
+                                    )}
+
+                                    {accounts.filter(a => a.type === 'Live').length > 0 && (
+                                        <Card title={<span style={{ fontSize: 18, color: '#faad14' }}>Cuentas Live</span>} className="premium-card" style={{ marginBottom: 24 }}>
+                                            <Table
+                                                columns={columns}
+                                                dataSource={accounts.filter(a => a.type === 'Live')}
+                                                pagination={false}
+                                                rowClassName={() => 'table-row-hover'}
+                                                style={{ overflowX: 'auto' }}
+                                            />
+                                        </Card>
+                                    )}
+                                </Content>
+                            </Layout>
+                        </Layout>
+
+                        {/* Modal para Editar */}
+                        <Modal
+                            title="Editar Datos de la Cuenta"
+                            open={isModalVisible}
+                            onOk={handleModalOk}
+                            onCancel={handleModalCancel}
+                            width={600}
+                            footer={[
+                                <div key="footer-actions" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                                    <Button key="delete" danger icon={DeleteOutlined && <DeleteOutlined />} onClick={handleDeleteAccount}>
+                                        Eliminar
+                                    </Button>
+                                    <div>
+                                        <Button key="cancel" onClick={handleModalCancel}>
+                                            Cancelar
+                                        </Button>
+                                        <Button key="submit" type="primary" onClick={handleModalOk}>
+                                            Guardar Cambios
+                                        </Button>
+                                    </div>
+                                </div>
+                            ]}
+                        >
+                            <Form form={form} layout="vertical">
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="name" label="Nombre de Cuenta" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Input placeholder="Ej. Tradeify PA #1" />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="company" label="Compañía" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Input placeholder="Ej. Tradeify" />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Row gutter={16}>
+                                    <Col span={24}>
+                                        <Form.Item name="type" label="Tipo de Cuenta" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Select placeholder="Selecciona el tipo">
+                                                <Select.Option value="Evaluación">Evaluación</Select.Option>
+                                                <Select.Option value="Master">Master / Fondeada</Select.Option>
+                                                <Select.Option value="Live">Live / Real</Select.Option>
+                                            </Select>
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="balance" label="Balance Actual ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="goal" label="Meta de Capital ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                            </Form>
+                        </Modal>
+
+                        {/* Modal para Nueva Cuenta */}
+                        <Modal
+                            title="Añadir Nueva Cuenta"
+                            open={isNewModalVisible}
+                            onOk={handleNewModalOk}
+                            onCancel={() => setIsNewModalVisible(false)}
+                            okText="Crear Cuenta"
+                            cancelText="Cancelar"
+                            width={600}
+                        >
+                            <Form form={newForm} layout="vertical">
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="name" label="Nombre de Cuenta" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Input placeholder="Ej. Apex 50k - 01" />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="company" label="Compañía" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Input placeholder="Ej. Tradeify" />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Row gutter={16}>
+                                    <Col span={24}>
+                                        <Form.Item name="type" label="Tipo de Cuenta" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Select placeholder="Selecciona el tipo">
+                                                <Select.Option value="Evaluación">Evaluación</Select.Option>
+                                                <Select.Option value="Master">Master / Fondeada</Select.Option>
+                                                <Select.Option value="Live">Live / Real</Select.Option>
+                                            </Select>
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="initial" label="Balance Inicial ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="goal" label="Meta de Capital ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                            </Form>
+                        </Modal>
+
+                        {/* Modal para Registrar Gasto */}
+                        <Modal
+                            title="Registrar Nuevo Gasto"
+                            open={isExpenseModalVisible}
+                            onOk={handleExpenseOk}
+                            onCancel={() => { setIsExpenseModalVisible(false); expenseForm.resetFields(); }}
+                            okText="Guardar Gasto"
+                            cancelText="Cancelar"
+                            width={500}
+                        >
+                            <Form form={expenseForm} layout="vertical" initialValues={{ currency: 'USD' }}>
+                                <Form.Item name="category" label="Categoría" rules={[{ required: true, message: 'Selecciona una categoría' }]}>
+                                    <Select placeholder="Selecciona el tipo de gasto">
+                                        <Select.Option value="Capital de Trabajo">Capital de Trabajo (Ej. Evaluaciones)</Select.Option>
+                                        <Select.Option value="Servicios">Servicios (Ej. Internet, Software)</Select.Option>
+                                        <Select.Option value="Activos Amortizables">Activos Amortizables (Ej. Hardware, PC)</Select.Option>
+                                    </Select>
+                                </Form.Item>
+
+                                <Form.Item name="description" label="Descripción" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Input placeholder="Ej. Prueba Apex 50k" />
+                                </Form.Item>
+
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="currency" label="Moneda" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Select>
+                                                <Select.Option value="USD">USD ($)</Select.Option>
+                                                <Select.Option value="ARS">ARS ($)</Select.Option>
+                                            </Select>
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="originalAmount" label="Monto Original" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} min={0} />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+
+                                {expenseCurrency === 'ARS' && (
+                                    <Form.Item name="exchangeRate" label="Tipo de Cambio (ARS por cada 1 USD)" rules={[{ required: true, message: 'Requerido' }]}>
+                                        <InputNumber style={{ width: '100%' }} min={1} placeholder="Ej. 1200" />
+                                    </Form.Item>
+                                )}
+
+                                {expenseCategory === 'Activos Amortizables' && (
+                                    <Form.Item name="usefulLifeMonths" label="Vida útil (en meses)" rules={[{ required: true, message: 'Requerido para amortizar' }]}>
+                                        <InputNumber style={{ width: '100%' }} min={1} max={120} placeholder="Ej. 12" />
+                                    </Form.Item>
+                                )}
+                            </Form>
+                        </Modal>
+
+                        {/* Modal para Registrar Cobro/Retiro */}
+                        <Modal
+                            title="Registrar Nuevo Cobro (Retiro)"
+                            open={isIncomeModalVisible}
+                            onOk={handleIncomeOk}
+                            onCancel={() => { setIsIncomeModalVisible(false); incomeForm.resetFields(); }}
+                            okText="Guardar Cobro"
+                            cancelText="Cancelar"
+                            width={500}
+                        >
+                            <Form form={incomeForm} layout="vertical">
+                                <Form.Item name="sourceAccount" label="Cuenta Origen (Solo Master/Live)" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Select placeholder="Selecciona de dónde provienen los fondos">
+                                        {accounts.filter(a => a.type === 'Master' || a.type === 'Live').map(acc => (
+                                            <Select.Option key={acc.key} value={acc.name}>{acc.name} ({acc.company})</Select.Option>
+                                        ))}
+                                    </Select>
+                                </Form.Item>
+
+                                <Form.Item name="description" label="Descripción / Motivo" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Input placeholder="Ej. Primer Retiro Tradeify" />
+                                </Form.Item>
+
+                                <Form.Item name="amount" label="Monto Retirado (USD)" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <InputNumber style={{ width: '100%' }} min={0} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
+
+                    </ConfigProvider>
+                );
+            };
+
+            const rootNode = document.getElementById('root');
+            if (window.ReactDOM && window.ReactDOM.createRoot) {
+                const root = window.ReactDOM.createRoot(rootNode);
+                root.render(<App />);
+            } else if (window.ReactDOM) {
+                window.ReactDOM.render(<App />, rootNode);
+            } else {
+                console.error("ReactDOM not found.");
+                rootNode.innerHTML = "<h1>Error: ReactDOM not found</h1>";
+            }
+        } catch (err) {
+            console.error(err);
+            document.getElementById('root').innerHTML = "<h1>Error en el renderizado</h1><pre>" + err.message + "</pre>";
+        }
+    </script>
+</body>
+
+</html>
