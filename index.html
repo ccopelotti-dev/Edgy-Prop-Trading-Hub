@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Edgy Trading Hub</title>
+    <title>Edgy Trady Hub</title>
     <!-- React & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
@@ -123,6 +123,52 @@
                     return [];
                 });
 
+                const [activeMenu, setActiveMenu] = React.useState('dashboard');
+
+                const [propTradingData, setPropTradingData] = React.useState(() => {
+                    const saved = localStorage.getItem('edgy_prop_trading');
+                    if (saved) {
+                        try { return JSON.parse(saved); } catch (e) { return []; }
+                    }
+                    return [
+                        { id: '1', name: 'Tradeify PA #1', firm: 'Tradeify', balance: 50000.00, pnlDiario: 850.00, goal: 3000.00, type: 'Evaluación Fase 1' }
+                    ];
+                });
+
+                React.useEffect(() => {
+                    localStorage.setItem('edgy_prop_trading', JSON.stringify(propTradingData));
+                }, [propTradingData]);
+
+                const [isPropModalVisible, setIsPropModalVisible] = React.useState(false);
+                const [propForm] = Form.useForm();
+
+                const getProgressPercent = (balanceNew, balanceInitial, goal) => {
+                    if (!goal) return 0;
+                    if (balanceNew === balanceInitial) return 0;
+                    const percent = ((balanceNew - balanceInitial) / goal) * 100;
+                    return parseFloat(percent.toFixed(1));
+                };
+
+                const getProgressColor = (percent) => {
+                    if (percent >= 100) return '#00b96b';
+                    if (percent >= 80) return '#1677ff';
+                    if (percent >= 50) return '#faad14';
+                    return '#ff4d4f';
+                };
+
+                const handlePropSubmit = (values) => {
+                    const newAcc = { ...values, id: Date.now().toString() };
+                    setPropTradingData([...propTradingData, newAcc]);
+                    setIsPropModalVisible(false);
+                    propForm.resetFields();
+                    message.success('Cuenta Prop agregada con éxito.');
+                };
+
+                const handleDeleteProp = (id) => {
+                    setPropTradingData(propTradingData.filter(a => a.id !== id));
+                    message.success('Cuenta Prop eliminada.');
+                };
+
                 React.useEffect(() => {
                     localStorage.setItem('edgy-futures-accounts', JSON.stringify(accounts));
                 }, [accounts]);
@@ -134,15 +180,48 @@
                 const [isAuthenticated, setIsAuthenticated] = React.useState(false);
                 const [loginError, setLoginError] = React.useState(false);
 
+                const [users, setUsers] = React.useState(() => {
+                    const saved = localStorage.getItem('edgy_users');
+                    if (saved) {
+                        try { return JSON.parse(saved); } catch (e) { return []; }
+                    }
+                    return [{ id: 1, username: 'admin', password: 'futures2026', role: 'admin' }];
+                });
+
+                React.useEffect(() => {
+                    localStorage.setItem('edgy_users', JSON.stringify(users));
+                }, [users]);
+
                 const handleLogin = (values) => {
-                    if (values.username === 'admin' && values.password === 'futures2026') {
+                    const validUser = users.find(u => u.username === values.username && u.password === values.password);
+                    if (validUser) {
                         setIsAuthenticated(true);
                         setLoginError(false);
-                        message.success('Acceso autorizado. Bienvenido.');
+                        message.success(`Acceso autorizado. Bienvenido ${validUser.username}.`);
                     } else {
                         setLoginError(true);
                         message.error('Usuario o contraseña incorrectos');
                     }
+                };
+
+                const [isUserModalVisible, setIsUserModalVisible] = React.useState(false);
+                const [userForm] = Form.useForm();
+
+                const handleUserSubmit = (values) => {
+                    const newUser = { id: Date.now(), ...values };
+                    setUsers([...users, newUser]);
+                    setIsUserModalVisible(false);
+                    userForm.resetFields();
+                    message.success('Usuario creado con éxito');
+                };
+
+                const handleDeleteUser = (id) => {
+                    if (id === 1 || users.length === 1) {
+                        message.error('No se puede eliminar el usuario principal o el único usuario activo.');
+                        return;
+                    }
+                    setUsers(users.filter(u => u.id !== id));
+                    message.success('Usuario eliminado');
                 };
 
                 const [isModalVisible, setIsModalVisible] = React.useState(false);
@@ -470,7 +549,7 @@
                             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#001529' }}>
                                 <Card style={{ width: 350, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', borderRadius: 12, border: 'none' }}>
                                     <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                                        <h2 style={{ color: PRIMARY_COLOR, margin: 0, paddingBottom: 8 }}>EDGY FUTURES HUB</h2>
+                                        <h2 style={{ color: PRIMARY_COLOR, margin: 0, paddingBottom: 8 }}>EDGY TRADY HUB</h2>
                                         <Text type="secondary">Acceso Restringido</Text>
                                     </div>
                                     <Form onFinish={handleLogin} layout="vertical">
@@ -502,18 +581,22 @@
                         <Layout style={{ minHeight: '100vh' }}>
                             <Sider width={250} theme="dark" style={{ background: PRIMARY_COLOR }}>
                                 <div className="logo">
-                                    EDGY FUTURES HUB
+                                    EDGY TRADY HUB
                                 </div>
                                 <Menu
                                     theme="dark"
                                     style={{ background: PRIMARY_COLOR }}
                                     mode="inline"
-                                    defaultSelectedKeys={['1']}
+                                    selectedKeys={[activeMenu]}
                                     items={[
-                                        { key: '1', icon: DashboardOutlined && <DashboardOutlined />, label: 'Dashboard' },
+                                        { key: 'dashboard', icon: DashboardOutlined && <DashboardOutlined />, label: 'Dashboard' },
+                                        { key: 'prop_trading_futures', icon: LineChartOutlined && <LineChartOutlined />, label: 'Prop Trading Futures' },
+                                        { key: 'prop_trading_cfd', icon: DashboardOutlined && <DashboardOutlined />, label: 'Prop Trading CFD' },
                                         { key: '2', icon: LineChartOutlined && <LineChartOutlined />, label: 'Análisis de Trading' },
                                         { key: '3', icon: BankOutlined && <BankOutlined />, label: 'Cuentas' },
                                         { key: '4', icon: WalletOutlined && <WalletOutlined />, label: 'Retiros' },
+                                        { type: 'divider' },
+                                        { key: 'configuracion', icon: UserOutlined && <UserOutlined />, label: 'Configuración' },
                                         { type: 'divider' },
                                         { key: 'logout', icon: LogoutOutlined && <LogoutOutlined />, label: 'Cerrar Sesión', danger: true }
                                     ]}
@@ -521,6 +604,8 @@
                                         if (key === 'logout') {
                                             setIsAuthenticated(false);
                                             message.info('Sesión cerrada.');
+                                        } else {
+                                            setActiveMenu(key);
                                         }
                                     }}
                                 />
@@ -530,172 +615,261 @@
                                     <Title level={4} style={{ margin: 0 }}>Panel Principal</Title>
                                 </Header>
                                 <Content style={{ margin: '24px 24px', overflow: 'initial' }}>
-                                    <div style={{ marginBottom: 24 }}>
-                                        <Title level={2} style={{ marginBottom: 4 }}>Hola, Carlos 👋</Title>
-                                        <Text type="secondary" style={{ fontSize: 16 }}>Aquí tienes el resumen de tu actividad de hoy.</Text>
+                                    <div style={{ display: activeMenu === 'dashboard' ? 'block' : 'none' }}>
+                                        <div style={{ marginBottom: 24, padding: '48px 0', textAlign: 'center' }}>
+                                            <Title level={2} style={{ color: PRIMARY_COLOR }}>Panel de Control Principal</Title>
+                                        </div>
                                     </div>
 
-                                    <Row gutter={24} style={{ marginBottom: 24 }}>
-                                        <Col xs={24} sm={8}>
-                                            <Card className="premium-card" style={{ borderLeft: '4px solid #faad14' }}>
-                                                <Statistic
-                                                    title={<span style={{ fontSize: 14, fontWeight: 500 }}>Inversión en Flota</span>}
-                                                    value={inversionFlota}
-                                                    precision={2}
-                                                    valueStyle={{ fontWeight: 700, fontSize: 24 }}
-                                                    prefix="$"
-                                                />
-                                            </Card>
-                                        </Col>
-                                        <Col xs={24} sm={8}>
-                                            <Card className="premium-card" style={{ borderLeft: '4px solid #722ed1' }}>
-                                                <Statistic
-                                                    title={<span style={{ fontSize: 14, fontWeight: 500 }}>Valor de Activos (Neto)</span>}
-                                                    value={valorActivosNeto}
-                                                    precision={2}
-                                                    valueStyle={{ fontWeight: 700, fontSize: 24 }}
-                                                    prefix="$"
-                                                />
-                                            </Card>
-                                        </Col>
-                                        <Col xs={24} sm={8}>
-                                            <Card className="premium-card" style={{ borderLeft: beneficioNetoReal >= 0 ? '4px solid #52c41a' : '4px solid #ff4d4f' }}>
-                                                <Statistic
-                                                    title={<span style={{ fontSize: 14, fontWeight: 500 }}>Beneficio Neto Real</span>}
-                                                    value={beneficioNetoReal}
-                                                    precision={2}
-                                                    valueStyle={{ color: beneficioNetoReal >= 0 ? '#3f8600' : '#cf1322', fontWeight: 700, fontSize: 24 }}
-                                                    prefix="$"
-                                                />
-                                            </Card>
-                                        </Col>
-                                    </Row>
+                                    <div style={{ display: activeMenu === 'prop_trading_futures' ? 'block' : 'none' }}>
+                                        <div style={{ marginBottom: 24 }}>
+                                            <Title level={2} style={{ marginBottom: 4 }}>Hola, Carlos 👋</Title>
+                                            <Text type="secondary" style={{ fontSize: 16 }}>Aquí tienes el resumen de tu actividad de hoy.</Text>
+                                        </div>
 
-                                    <Title level={5} style={{ marginBottom: 16, marginTop: 32, color: PRIMARY_COLOR }}>Métricas de Cuentas de Trading</Title>
-                                    <Row gutter={24} style={{ marginBottom: 24 }}>
-                                        <Col xs={24} sm={8}>
-                                            <Card className="premium-card">
-                                                <Statistic
-                                                    title={<span style={{ fontSize: 13, fontWeight: 500 }}>Balance Total de Flota</span>}
-                                                    value={totalBalance}
-                                                    precision={2}
-                                                    valueStyle={{ color: PRIMARY_COLOR, fontWeight: 700, fontSize: 24 }}
-                                                    prefix="$"
+                                        <Row gutter={24} style={{ marginBottom: 24 }}>
+                                            <Col xs={24} sm={8}>
+                                                <Card className="premium-card" style={{ borderLeft: '4px solid #faad14' }}>
+                                                    <Statistic
+                                                        title={<span style={{ fontSize: 14, fontWeight: 500 }}>Inversión en Flota</span>}
+                                                        value={inversionFlota}
+                                                        precision={2}
+                                                        valueStyle={{ fontWeight: 700, fontSize: 24 }}
+                                                        prefix="$"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                            <Col xs={24} sm={8}>
+                                                <Card className="premium-card" style={{ borderLeft: '4px solid #722ed1' }}>
+                                                    <Statistic
+                                                        title={<span style={{ fontSize: 14, fontWeight: 500 }}>Valor de Activos (Neto)</span>}
+                                                        value={valorActivosNeto}
+                                                        precision={2}
+                                                        valueStyle={{ fontWeight: 700, fontSize: 24 }}
+                                                        prefix="$"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                            <Col xs={24} sm={8}>
+                                                <Card className="premium-card" style={{ borderLeft: beneficioNetoReal >= 0 ? '4px solid #52c41a' : '4px solid #ff4d4f' }}>
+                                                    <Statistic
+                                                        title={<span style={{ fontSize: 14, fontWeight: 500 }}>Beneficio Neto Real</span>}
+                                                        value={beneficioNetoReal}
+                                                        precision={2}
+                                                        valueStyle={{ color: beneficioNetoReal >= 0 ? '#3f8600' : '#cf1322', fontWeight: 700, fontSize: 24 }}
+                                                        prefix="$"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                        </Row>
+
+                                        <Title level={5} style={{ marginBottom: 16, marginTop: 32, color: PRIMARY_COLOR }}>Métricas de Cuentas de Trading</Title>
+                                        <Row gutter={24} style={{ marginBottom: 24 }}>
+                                            <Col xs={24} sm={8}>
+                                                <Card className="premium-card">
+                                                    <Statistic
+                                                        title={<span style={{ fontSize: 13, fontWeight: 500 }}>Balance Total de Flota</span>}
+                                                        value={totalBalance}
+                                                        precision={2}
+                                                        valueStyle={{ color: PRIMARY_COLOR, fontWeight: 700, fontSize: 24 }}
+                                                        prefix="$"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                            <Col xs={24} sm={8}>
+                                                <Card className="premium-card">
+                                                    <Statistic
+                                                        title={<span style={{ fontSize: 13, fontWeight: 500 }}>PnL Diario Neto</span>}
+                                                        value={totalPnl}
+                                                        precision={2}
+                                                        valueStyle={{ color: totalPnl >= 0 ? '#3f8600' : '#cf1322', fontWeight: 700, fontSize: 24 }}
+                                                        prefix={RiseOutlined && <RiseOutlined />}
+                                                        suffix="$"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                            <Col xs={24} sm={8}>
+                                                <Card className="premium-card">
+                                                    <Statistic
+                                                        title={<span style={{ fontSize: 13, fontWeight: 500 }}>Cuentas Activas</span>}
+                                                        value={accounts.length}
+                                                        valueStyle={{ color: '#1677ff', fontWeight: 700, fontSize: 24 }}
+                                                        prefix={UserOutlined && <UserOutlined />}
+                                                    />
+                                                </Card>
+                                            </Col>
+                                        </Row>
+
+                                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 24, gap: '8px', flexWrap: 'wrap' }}>
+                                            <Space wrap>
+                                                <Button
+                                                    danger
+                                                    icon={FallOutlined && <FallOutlined />}
+                                                    onClick={() => setIsExpenseModalVisible(true)}
+                                                >
+                                                    Registrar Gasto
+                                                </Button>
+                                                <Button
+                                                    style={{ color: '#52c41a', borderColor: '#52c41a' }}
+                                                    icon={DollarOutlined && <DollarOutlined />}
+                                                    onClick={() => setIsIncomeModalVisible(true)}
+                                                >
+                                                    Registrar Cobro
+                                                </Button>
+
+                                                <span style={{ borderLeft: '1px solid #d9d9d9', height: '32px', margin: '0 8px' }}></span>
+
+                                                <input
+                                                    type="file"
+                                                    accept=".csv"
+                                                    ref={fileInputRef}
+                                                    style={{ display: 'none' }}
+                                                    onChange={handleImportCsv}
+                                                />
+                                                <Button
+                                                    icon={UploadOutlined && <UploadOutlined />}
+                                                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                                                >
+                                                    Importar CSV NinjaTrader
+                                                </Button>
+                                                <Button
+                                                    type="primary"
+                                                    icon={PlusOutlined && <PlusOutlined />}
+                                                    onClick={() => setIsNewModalVisible(true)}
+                                                >
+                                                    Nueva Cuenta
+                                                </Button>
+                                                <Button
+                                                    danger
+                                                    onClick={() => {
+                                                        if (window.confirm('¿Estás seguro de que quieres limpiar el LocalStorage y reiniciar las cuentas?')) {
+                                                            localStorage.removeItem('edgy-futures-accounts');
+                                                            window.location.reload();
+                                                        }
+                                                    }}
+                                                >
+                                                    Resetear Todo
+                                                </Button>
+                                            </Space>
+                                        </div>
+
+                                        {accounts.filter(a => a.type === 'Evaluación').length > 0 && (
+                                            <Card title={<span style={{ fontSize: 18, color: '#1677ff' }}>Evaluaciones</span>} className="premium-card" style={{ marginBottom: 24 }}>
+                                                <Table
+                                                    columns={columns}
+                                                    dataSource={accounts.filter(a => a.type === 'Evaluación')}
+                                                    pagination={false}
+                                                    rowClassName={() => 'table-row-hover'}
+                                                    style={{ overflowX: 'auto' }}
                                                 />
                                             </Card>
-                                        </Col>
-                                        <Col xs={24} sm={8}>
-                                            <Card className="premium-card">
-                                                <Statistic
-                                                    title={<span style={{ fontSize: 13, fontWeight: 500 }}>PnL Diario Neto</span>}
-                                                    value={totalPnl}
-                                                    precision={2}
-                                                    valueStyle={{ color: totalPnl >= 0 ? '#3f8600' : '#cf1322', fontWeight: 700, fontSize: 24 }}
-                                                    prefix={RiseOutlined && <RiseOutlined />}
-                                                    suffix="$"
+                                        )}
+
+                                        {accounts.filter(a => a.type === 'Master').length > 0 && (
+                                            <Card title={<span style={{ fontSize: 18, color: '#722ed1' }}>Cuentas Master</span>} className="premium-card" style={{ marginBottom: 24 }}>
+                                                <Table
+                                                    columns={columns}
+                                                    dataSource={accounts.filter(a => a.type === 'Master')}
+                                                    pagination={false}
+                                                    rowClassName={() => 'table-row-hover'}
+                                                    style={{ overflowX: 'auto' }}
                                                 />
                                             </Card>
-                                        </Col>
-                                        <Col xs={24} sm={8}>
-                                            <Card className="premium-card">
-                                                <Statistic
-                                                    title={<span style={{ fontSize: 13, fontWeight: 500 }}>Cuentas Activas</span>}
-                                                    value={accounts.length}
-                                                    valueStyle={{ color: '#1677ff', fontWeight: 700, fontSize: 24 }}
-                                                    prefix={UserOutlined && <UserOutlined />}
+                                        )}
+
+                                        {accounts.filter(a => a.type === 'Live').length > 0 && (
+                                            <Card title={<span style={{ fontSize: 18, color: '#faad14' }}>Cuentas Live</span>} className="premium-card" style={{ marginBottom: 24 }}>
+                                                <Table
+                                                    columns={columns}
+                                                    dataSource={accounts.filter(a => a.type === 'Live')}
+                                                    pagination={false}
+                                                    rowClassName={() => 'table-row-hover'}
+                                                    style={{ overflowX: 'auto' }}
                                                 />
                                             </Card>
-                                        </Col>
-                                    </Row>
+                                        )}
+                                    </div>
 
-                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 24, gap: '8px', flexWrap: 'wrap' }}>
-                                        <Space wrap>
-                                            <Button
-                                                danger
-                                                icon={FallOutlined && <FallOutlined />}
-                                                onClick={() => setIsExpenseModalVisible(true)}
-                                            >
-                                                Registrar Gasto
+                                    <div style={{ display: activeMenu === 'prop_trading_cfd' ? 'block' : 'none' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                                            <div>
+                                                <Title level={2} style={{ marginBottom: 4 }}>Módulo de Prop Trading CFD</Title>
+                                                <Text type="secondary" style={{ fontSize: 16 }}>Monitoreo de evaluaciones y cuentas reales.</Text>
+                                            </div>
+                                            <Button type="primary" icon={PlusOutlined && <PlusOutlined />} onClick={() => setIsPropModalVisible(true)}>
+                                                Nueva Cuenta Prop
                                             </Button>
-                                            <Button
-                                                style={{ color: '#52c41a', borderColor: '#52c41a' }}
-                                                icon={DollarOutlined && <DollarOutlined />}
-                                                onClick={() => setIsIncomeModalVisible(true)}
-                                            >
-                                                Registrar Cobro
-                                            </Button>
+                                        </div>
 
-                                            <span style={{ borderLeft: '1px solid #d9d9d9', height: '32px', margin: '0 8px' }}></span>
+                                        {[
+                                            { title: 'Evaluación Fase 1', type: 'Evaluación Fase 1', color: '#1677ff' },
+                                            { title: 'Evaluación Fase 2', type: 'Evaluación Fase 2', color: '#722ed1' },
+                                            { title: 'Real', type: 'Real', color: '#52c41a' }
+                                        ].map(section => {
+                                            const sectionData = propTradingData.filter(item => item.type === section.type);
+                                            if (sectionData.length === 0) return null;
+                                            return (
+                                                <Card key={section.type} title={<span style={{ fontSize: 18, color: section.color }}>{section.title}</span>} className="premium-card" style={{ marginBottom: 24 }}>
+                                                    <Table
+                                                        dataSource={sectionData}
+                                                        pagination={false}
+                                                        rowKey="id"
+                                                        columns={[
+                                                            { title: 'Compañía', dataIndex: 'firm', key: 'firm' },
+                                                            { title: 'Nombre', dataIndex: 'name', key: 'name', render: (text) => <strong>{text}</strong> },
+                                                            { title: 'Balance Inicial', dataIndex: 'balance', key: 'balance', render: val => `$ ${val.toLocaleString()}` },
+                                                            { title: 'P&L Diario', dataIndex: 'pnlDiario', key: 'pnlDiario', render: val => <span style={{ color: val >= 0 ? '#3f8600' : '#cf1322', fontWeight: 600 }}>{val >= 0 ? '+' : '-'}${Math.abs(val).toLocaleString()}</span> },
+                                                            { title: 'Balance New', key: 'newBal', render: (_, record) => { const bal = record.balance + record.pnlDiario; return <strong>$ {bal.toLocaleString()}</strong> } },
+                                                            { title: 'Meta / Retiro', dataIndex: 'goal', key: 'goal', render: val => val ? `$ ${val.toLocaleString()}` : '-' },
+                                                            {
+                                                                title: 'Progreso', key: 'prog', render: (_, record) => {
+                                                                    let percent = getProgressPercent(record.balance + record.pnlDiario, record.balance, record.goal);
+                                                                    const exactPercent = percent.toFixed(1);
+                                                                    let percentUI = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+                                                                    return (
+                                                                        <div style={{ width: 140 }}>
+                                                                            <Progress percent={percentUI} format={() => `${exactPercent}%`} status={record.pnlDiario < 0 ? 'exception' : 'active'} strokeColor={record.pnlDiario >= 0 ? getProgressColor(percent) : undefined} />
+                                                                        </div>
+                                                                    );
+                                                                }
+                                                            },
+                                                            { title: 'Acción', key: 'action', render: (_, record) => <Button type="text" danger icon={DeleteOutlined && <DeleteOutlined />} onClick={() => handleDeleteProp(record.id)} /> }
+                                                        ]}
+                                                    />
+                                                </Card>
+                                            );
+                                        })}
+                                    </div>
 
-                                            <input
-                                                type="file"
-                                                accept=".csv"
-                                                ref={fileInputRef}
-                                                style={{ display: 'none' }}
-                                                onChange={handleImportCsv}
-                                            />
-                                            <Button
-                                                icon={UploadOutlined && <UploadOutlined />}
-                                                onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                                            >
-                                                Importar CSV NinjaTrader
+                                    <div style={{ display: activeMenu === 'configuracion' ? 'block' : 'none' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                                            <div>
+                                                <Title level={2} style={{ marginBottom: 4 }}>Configuración del Sistema</Title>
+                                                <Text type="secondary" style={{ fontSize: 16 }}>Gestión de usuarios y accesos.</Text>
+                                            </div>
+                                            <Button type="primary" icon={PlusOutlined && <PlusOutlined />} onClick={() => setIsUserModalVisible(true)}>
+                                                Nuevo Usuario
                                             </Button>
-                                            <Button
-                                                type="primary"
-                                                icon={PlusOutlined && <PlusOutlined />}
-                                                onClick={() => setIsNewModalVisible(true)}
-                                            >
-                                                Nueva Cuenta
-                                            </Button>
-                                            <Button
-                                                danger
-                                                onClick={() => {
-                                                    if (window.confirm('¿Estás seguro de que quieres limpiar el LocalStorage y reiniciar las cuentas?')) {
-                                                        localStorage.removeItem('edgy-futures-accounts');
-                                                        window.location.reload();
+                                        </div>
+                                        <Card title={<span style={{ fontSize: 18, color: PRIMARY_COLOR }}>Usuarios Registrados</span>} className="premium-card">
+                                            <Table
+                                                dataSource={users}
+                                                rowKey="id"
+                                                pagination={false}
+                                                columns={[
+                                                    { title: 'ID', dataIndex: 'id', key: 'id' },
+                                                    { title: 'Usuario', dataIndex: 'username', key: 'username', render: text => <strong>{text}</strong> },
+                                                    { title: 'Rol', dataIndex: 'role', key: 'role', render: text => <Tag color={text === 'admin' ? 'blue' : 'default'}>{text.toUpperCase()}</Tag> },
+                                                    {
+                                                        title: 'Acciones', key: 'actions', render: (_, record) => (
+                                                            <Button type="text" danger icon={DeleteOutlined && <DeleteOutlined />} onClick={() => handleDeleteUser(record.id)}>Eliminar</Button>
+                                                        )
                                                     }
-                                                }}
-                                            >
-                                                Resetear Todo
-                                            </Button>
-                                        </Space>
+                                                ]}
+                                            />
+                                        </Card>
                                     </div>
 
-                                    {accounts.filter(a => a.type === 'Evaluación').length > 0 && (
-                                        <Card title={<span style={{ fontSize: 18, color: '#1677ff' }}>Evaluaciones</span>} className="premium-card" style={{ marginBottom: 24 }}>
-                                            <Table
-                                                columns={columns}
-                                                dataSource={accounts.filter(a => a.type === 'Evaluación')}
-                                                pagination={false}
-                                                rowClassName={() => 'table-row-hover'}
-                                                style={{ overflowX: 'auto' }}
-                                            />
-                                        </Card>
-                                    )}
-
-                                    {accounts.filter(a => a.type === 'Master').length > 0 && (
-                                        <Card title={<span style={{ fontSize: 18, color: '#722ed1' }}>Cuentas Master</span>} className="premium-card" style={{ marginBottom: 24 }}>
-                                            <Table
-                                                columns={columns}
-                                                dataSource={accounts.filter(a => a.type === 'Master')}
-                                                pagination={false}
-                                                rowClassName={() => 'table-row-hover'}
-                                                style={{ overflowX: 'auto' }}
-                                            />
-                                        </Card>
-                                    )}
-
-                                    {accounts.filter(a => a.type === 'Live').length > 0 && (
-                                        <Card title={<span style={{ fontSize: 18, color: '#faad14' }}>Cuentas Live</span>} className="premium-card" style={{ marginBottom: 24 }}>
-                                            <Table
-                                                columns={columns}
-                                                dataSource={accounts.filter(a => a.type === 'Live')}
-                                                pagination={false}
-                                                rowClassName={() => 'table-row-hover'}
-                                                style={{ overflowX: 'auto' }}
-                                            />
-                                        </Card>
-                                    )}
                                 </Content>
                             </Layout>
                         </Layout>
@@ -889,6 +1063,66 @@
 
                                 <Form.Item name="amount" label="Monto Retirado (USD)" rules={[{ required: true, message: 'Requerido' }]}>
                                     <InputNumber style={{ width: '100%' }} min={0} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
+
+                        {/* Modal Prop Trading */}
+                        <Modal title="Nueva Cuenta Prop Trading" open={isPropModalVisible} onCancel={() => { setIsPropModalVisible(false); propForm.resetFields(); }} onOk={() => propForm.submit()} okText="Guardar" cancelText="Cancelar">
+                            <Form form={propForm} layout="vertical" onFinish={handlePropSubmit}>
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="firm" label="Compañía" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Input placeholder="Ej. Tradeify, Topstep" />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="name" label="Nombre" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Input placeholder="Ej. Tradeify PA #1" />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Form.Item name="type" label="Tipo" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Select placeholder="Seleccione el tipo">
+                                        <Select.Option value="Evaluación Fase 1">Evaluación Fase 1</Select.Option>
+                                        <Select.Option value="Evaluación Fase 2">Evaluación Fase 2</Select.Option>
+                                        <Select.Option value="Real">Real</Select.Option>
+                                    </Select>
+                                </Form.Item>
+                                <Row gutter={16}>
+                                    <Col span={8}>
+                                        <Form.Item name="balance" label="Balance Inicial" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={8}>
+                                        <Form.Item name="pnlDiario" label="PNL Diario" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={8}>
+                                        <Form.Item name="goal" label="Meta / Retiro" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                            </Form>
+                        </Modal>
+
+                        {/* Modal Nuevo Usuario */}
+                        <Modal title="Nuevo Usuario" open={isUserModalVisible} onCancel={() => { setIsUserModalVisible(false); userForm.resetFields(); }} onOk={() => userForm.submit()} okText="Crear Usuario" cancelText="Cancelar">
+                            <Form form={userForm} layout="vertical" onFinish={handleUserSubmit}>
+                                <Form.Item name="username" label="Nombre de Usuario" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Input placeholder="Ej. trader1" />
+                                </Form.Item>
+                                <Form.Item name="password" label="Contraseña" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Input.Password placeholder="Contraseña segura" />
+                                </Form.Item>
+                                <Form.Item name="role" label="Rol" rules={[{ required: true, message: 'Requerido' }]} initialValue="viewer">
+                                    <Select>
+                                        <Select.Option value="admin">Administrador</Select.Option>
+                                        <Select.Option value="viewer">Visor</Select.Option>
+                                    </Select>
                                 </Form.Item>
                             </Form>
                         </Modal>
