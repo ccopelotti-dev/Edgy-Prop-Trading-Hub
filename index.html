@@ -16,6 +16,8 @@
     <script src="https://unpkg.com/antd/dist/antd.min.js"></script>
     <!-- Ant Icons -->
     <script src="https://unpkg.com/@ant-design/icons/dist/index.umd.js"></script>
+    <!-- Supabase -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
     <style>
         body {
@@ -102,42 +104,53 @@
 
             const PRIMARY_COLOR = '#001529'; // Dark blue matching standard sidebar
 
+            // Supabase Client Initialization
+            const SUPABASE_URL = 'https://1pnufyqwbjbocsezdk1w.supabase.co';
+            const SUPABASE_KEY = 'sb_publishable_DhVxAUvXYsa6YyFBUim42w_N4lXQ44C';
+            const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
             const initialData = [
                 { key: '1', name: 'FTDFYSLX50149603034', company: 'Tradeify', type: 'Evaluación', balance: 51250, pnl: 1250, status: 'Activa', initial: 50000, goal: 3000 }
             ];
 
             const App = () => {
-                const [accounts, setAccounts] = React.useState(() => {
-                    const saved = localStorage.getItem('edgy-futures-accounts');
-                    if (saved) {
-                        try { return JSON.parse(saved); } catch (e) { return initialData; }
-                    }
-                    return initialData;
-                });
+                const [accounts, setAccounts] = React.useState(initialData);
+                const [transactions, setTransactions] = React.useState([]);
 
-                const [transactions, setTransactions] = React.useState(() => {
-                    const saved = localStorage.getItem('edgy-futures-accounting');
-                    if (saved) {
-                        try { return JSON.parse(saved); } catch (e) { return []; }
+                // Fetching accounts and transactions from Supabase
+                const fetchAccounts = async () => {
+                    const { data, error } = await supabase.from('futures_accounts').select('*');
+                    if (!error && data && data.length > 0) {
+                        setAccounts(data);
                     }
-                    return [];
-                });
+                };
+
+                const fetchTransactions = async () => {
+                    const { data, error } = await supabase.from('transactions').select('*');
+                    if (!error && data) {
+                        setTransactions(data);
+                    }
+                };
+
+                React.useEffect(() => {
+                    fetchAccounts();
+                    fetchTransactions();
+                }, []);
 
                 const [activeMenu, setActiveMenu] = React.useState('dashboard');
 
-                const [propTradingData, setPropTradingData] = React.useState(() => {
-                    const saved = localStorage.getItem('edgy_prop_trading');
-                    if (saved) {
-                        try { return JSON.parse(saved); } catch (e) { return []; }
+                const [propTradingData, setPropTradingData] = React.useState([]);
+
+                const fetchPropTradingData = async () => {
+                    const { data, error } = await supabase.from('cfd_accounts').select('*');
+                    if (!error && data) {
+                        setPropTradingData(data);
                     }
-                    return [
-                        { id: '1', name: 'Tradeify PA #1', firm: 'Tradeify', balance: 50000.00, pnlDiario: 850.00, goal: 3000.00, type: 'Evaluación Fase 1' }
-                    ];
-                });
+                };
 
                 React.useEffect(() => {
-                    localStorage.setItem('edgy_prop_trading', JSON.stringify(propTradingData));
-                }, [propTradingData]);
+                    fetchPropTradingData();
+                }, []);
 
                 const [isPropModalVisible, setIsPropModalVisible] = React.useState(false);
                 const [propForm] = Form.useForm();
@@ -156,48 +169,67 @@
                     return '#ff4d4f';
                 };
 
-                const handlePropSubmit = (values) => {
+                const handlePropSubmit = async (values) => {
                     const newAcc = { ...values, id: Date.now().toString() };
-                    setPropTradingData([...propTradingData, newAcc]);
-                    setIsPropModalVisible(false);
-                    propForm.resetFields();
-                    message.success('Cuenta Prop agregada con éxito.');
+                    const { data, error } = await supabase.from('cfd_accounts').insert([newAcc]).select();
+                    if (!error && data) {
+                        setPropTradingData([...propTradingData, data[0]]);
+                        setIsPropModalVisible(false);
+                        propForm.resetFields();
+                        message.success('Cuenta Prop agregada con éxito en Supabase.');
+                    } else {
+                        message.error('Error al agregar cuenta Prop.');
+                    }
                 };
 
-                const handleDeleteProp = (id) => {
-                    setPropTradingData(propTradingData.filter(a => a.id !== id));
-                    message.success('Cuenta Prop eliminada.');
+                const handleDeleteProp = async (id) => {
+                    const { error } = await supabase.from('cfd_accounts').delete().eq('id', id);
+                    if (!error) {
+                        setPropTradingData(propTradingData.filter(a => a.id !== id));
+                        message.success('Cuenta Prop eliminada de Supabase.');
+                    } else {
+                        message.error('Error al eliminar cuenta Prop.');
+                    }
                 };
 
-                React.useEffect(() => {
-                    localStorage.setItem('edgy-futures-accounts', JSON.stringify(accounts));
-                }, [accounts]);
-
-                React.useEffect(() => {
-                    localStorage.setItem('edgy-futures-accounting', JSON.stringify(transactions));
-                }, [transactions]);
+                // localStorage syncs replaced with Supabase useEffects above
 
                 const [isAuthenticated, setIsAuthenticated] = React.useState(false);
                 const [loginError, setLoginError] = React.useState(false);
 
-                const [users, setUsers] = React.useState(() => {
-                    const saved = localStorage.getItem('edgy_users');
-                    if (saved) {
-                        try { return JSON.parse(saved); } catch (e) { return []; }
-                    }
-                    return [{ id: 1, username: 'admin', password: 'futures2026', role: 'admin' }];
-                });
+                const [users, setUsers] = React.useState([]);
+                const [currentUser, setCurrentUser] = React.useState(null);
+
+                const fetchUsers = async () => {
+                    const { data, error } = await supabase.from('users').select('*');
+                    if (!error && data) setUsers(data);
+                };
 
                 React.useEffect(() => {
-                    localStorage.setItem('edgy_users', JSON.stringify(users));
-                }, [users]);
+                    fetchUsers();
+                }, []);
 
-                const handleLogin = (values) => {
-                    const validUser = users.find(u => u.username === values.username && u.password === values.password);
+                const handleLogin = async (values) => {
+                    const { username, password } = values;
+                    let validUser = users.find(u => u.username === username && u.password === password);
+
                     if (validUser) {
+                        setCurrentUser(validUser);
                         setIsAuthenticated(true);
                         setLoginError(false);
                         message.success(`Acceso autorizado. Bienvenido ${validUser.username}.`);
+                    } else if (username === 'admin' && password === 'futures2026' && users.length === 0) {
+                        // Crear usuario admin inicial si la tabla está vacía y se usan credenciales hardcodeadas
+                        const { data, error } = await supabase.from('users').insert([{ username: 'admin', password: 'futures2026', role: 'admin' }]).select();
+                        if (!error && data) {
+                            setCurrentUser(data[0]);
+                            setUsers([data[0]]);
+                            setIsAuthenticated(true);
+                            setLoginError(false);
+                            message.success('Usuario admin inicial creado exitosamente. Bienvenido.');
+                        } else {
+                            message.error('Error al crear usuario inicial temporal en Supabase.');
+                        }
                     } else {
                         setLoginError(true);
                         message.error('Usuario o contraseña incorrectos');
@@ -207,21 +239,38 @@
                 const [isUserModalVisible, setIsUserModalVisible] = React.useState(false);
                 const [userForm] = Form.useForm();
 
-                const handleUserSubmit = (values) => {
-                    const newUser = { id: Date.now(), ...values };
-                    setUsers([...users, newUser]);
-                    setIsUserModalVisible(false);
-                    userForm.resetFields();
-                    message.success('Usuario creado con éxito');
-                };
-
-                const handleDeleteUser = (id) => {
-                    if (id === 1 || users.length === 1) {
-                        message.error('No se puede eliminar el usuario principal o el único usuario activo.');
+                const handleUserSubmit = async (values) => {
+                    if (currentUser?.role !== 'admin') {
+                        message.error('No tienes permisos de administrador.');
                         return;
                     }
-                    setUsers(users.filter(u => u.id !== id));
-                    message.success('Usuario eliminado');
+                    const { data, error } = await supabase.from('users').insert([values]).select();
+                    if (!error && data) {
+                        setUsers([...users, data[0]]);
+                        setIsUserModalVisible(false);
+                        userForm.resetFields();
+                        message.success('Usuario creado con éxito en Supabase');
+                    } else {
+                        message.error('Error al crear usuario en Supabase.');
+                    }
+                };
+
+                const handleDeleteUser = async (id) => {
+                    if (currentUser?.role !== 'admin') {
+                        message.error('No tienes permisos de administrador.');
+                        return;
+                    }
+                    if (users.length <= 1) {
+                        message.error('No puedes eliminar el único usuario activo del sistema.');
+                        return;
+                    }
+                    const { error } = await supabase.from('users').delete().eq('id', id);
+                    if (!error) {
+                        setUsers(users.filter(u => u.id !== id));
+                        message.success('Usuario eliminado de Supabase');
+                    } else {
+                        message.error('Error al eliminar usuario de Supabase.');
+                    }
                 };
 
                 const [isModalVisible, setIsModalVisible] = React.useState(false);
@@ -253,20 +302,37 @@
                 };
 
                 const handleModalOk = () => {
-                    form.validateFields().then((values) => {
-                        const updatedAccounts = accounts.map(acc => {
-                            if (acc.key === editingAccount.key) {
-                                const initialBalance = acc.initial || (acc.balance - acc.pnl);
-                                const newBalance = values.balance;
-                                const newPnl = newBalance - initialBalance;
-                                let newStatus = newBalance >= initialBalance ? 'Activa' : (newBalance < initialBalance - 1000 ? 'Peligro' : 'Advertencia');
-                                return { ...acc, name: values.name, company: values.company, type: values.type, balance: newBalance, pnl: newPnl, status: newStatus, goal: values.goal };
-                            }
-                            return acc;
-                        });
-                        setAccounts(updatedAccounts);
-                        setIsModalVisible(false);
-                        message.success('Cuenta actualizada correctamente');
+                    form.validateFields().then(async (values) => {
+                        const initialBalance = editingAccount.initial || (editingAccount.balance - editingAccount.pnl);
+                        const newBalance = values.balance;
+                        const newPnl = newBalance - initialBalance;
+                        let newStatus = newBalance >= initialBalance ? 'Activa' : (newBalance < initialBalance - 1000 ? 'Peligro' : 'Advertencia');
+
+                        const updatedAccount = {
+                            name: values.name,
+                            company: values.company,
+                            type: values.type,
+                            balance: newBalance,
+                            pnl: newPnl,
+                            status: newStatus,
+                            goal: values.goal
+                        };
+
+                        const { error } = await supabase.from('futures_accounts').update(updatedAccount).eq('key', editingAccount.key);
+
+                        if (!error) {
+                            const updatedAccountsList = accounts.map(acc => {
+                                if (acc.key === editingAccount.key) {
+                                    return { ...acc, ...updatedAccount };
+                                }
+                                return acc;
+                            });
+                            setAccounts(updatedAccountsList);
+                            setIsModalVisible(false);
+                            message.success('Cuenta actualizada correctamente en Supabase');
+                        } else {
+                            message.error('Error al actualizar la cuenta.');
+                        }
                     });
                 };
 
@@ -282,18 +348,23 @@
                             okText: 'Sí, Eliminar',
                             okType: 'danger',
                             cancelText: 'Cancelar',
-                            onOk() {
-                                const updatedAccounts = accounts.filter(acc => acc.key !== editingAccount.key);
-                                setAccounts(updatedAccounts);
-                                setIsModalVisible(false);
-                                message.success(`Cuenta "${editingAccount.name}" eliminada.`);
+                            async onOk() {
+                                const { error } = await supabase.from('futures_accounts').delete().eq('key', editingAccount.key);
+                                if (!error) {
+                                    const updatedAccounts = accounts.filter(acc => acc.key !== editingAccount.key);
+                                    setAccounts(updatedAccounts);
+                                    setIsModalVisible(false);
+                                    message.success(`Cuenta "${editingAccount.name}" eliminada de Supabase.`);
+                                } else {
+                                    message.error('Error al eliminar la cuenta.');
+                                }
                             },
                         });
                     }
                 };
 
                 const handleNewModalOk = () => {
-                    newForm.validateFields().then(values => {
+                    newForm.validateFields().then(async (values) => {
                         const newAccount = {
                             key: Date.now().toString(),
                             name: values.name,
@@ -305,15 +376,21 @@
                             goal: values.goal,
                             status: 'Activa'
                         };
-                        setAccounts([...accounts, newAccount]);
-                        setIsNewModalVisible(false);
-                        newForm.resetFields();
-                        message.success(`Cuenta "${values.name}" creada exitosamente`);
+
+                        const { data, error } = await supabase.from('futures_accounts').insert([newAccount]).select();
+                        if (!error && data) {
+                            setAccounts([...accounts, data[0]]);
+                            setIsNewModalVisible(false);
+                            newForm.resetFields();
+                            message.success(`Cuenta "${values.name}" creada exitosamente en Supabase`);
+                        } else {
+                            message.error('Error al crear la cuenta nueva.');
+                        }
                     });
                 };
 
                 const handleExpenseOk = () => {
-                    expenseForm.validateFields().then(values => {
+                    expenseForm.validateFields().then(async (values) => {
                         let exchangeRate = values.currency === 'ARS' ? (values.exchangeRate || 1) : 1;
                         let finalUsdAmount = values.currency === 'ARS' ? (values.originalAmount / exchangeRate) : values.originalAmount;
 
@@ -329,15 +406,21 @@
                             usefulLifeMonths: values.category === 'Activos Amortizables' ? values.usefulLifeMonths : null,
                             date: new Date().toISOString()
                         };
-                        setTransactions([...transactions, newTx]);
-                        setIsExpenseModalVisible(false);
-                        expenseForm.resetFields();
-                        message.success('Gasto registrado correctamente');
+
+                        const { data, error } = await supabase.from('transactions').insert([newTx]).select();
+                        if (!error && data) {
+                            setTransactions([...transactions, data[0]]);
+                            setIsExpenseModalVisible(false);
+                            expenseForm.resetFields();
+                            message.success('Gasto registrado correctamente en Supabase');
+                        } else {
+                            message.error('Error al registrar el gasto.');
+                        }
                     });
                 };
 
                 const handleIncomeOk = () => {
-                    incomeForm.validateFields().then(values => {
+                    incomeForm.validateFields().then(async (values) => {
                         const newTx = {
                             id: Date.now().toString(),
                             type: 'INCOME',
@@ -350,10 +433,16 @@
                             amount: values.amount,
                             date: new Date().toISOString()
                         };
-                        setTransactions([...transactions, newTx]);
-                        setIsIncomeModalVisible(false);
-                        incomeForm.resetFields();
-                        message.success('Cobro/Retiro registrado correctamente');
+
+                        const { data, error } = await supabase.from('transactions').insert([newTx]).select();
+                        if (!error && data) {
+                            setTransactions([...transactions, data[0]]);
+                            setIsIncomeModalVisible(false);
+                            incomeForm.resetFields();
+                            message.success('Cobro/Retiro registrado correctamente en Supabase');
+                        } else {
+                            message.error('Error al registrar el cobro/retiro.');
+                        }
                     });
                 };
 
