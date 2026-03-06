@@ -373,29 +373,46 @@
 
                 const handleNewModalOk = () => {
                     newForm.validateFields().then(async (values) => {
+                        // Limpieza Numérica: remover caracteres no numéricos excepto el punto
+                        const cleanBalance = values.initial ? parseFloat(String(values.initial).replace(/[^0-9.-]+/g, "")) : 0;
+                        const cleanGoal = values.goal ? parseFloat(String(values.goal).replace(/[^0-9.-]+/g, "")) : 0;
+                        
+                        // Conversión de Fechas: ISO YYYY-MM-DD
+                        const formattedCreationDate = values.creation_date ? values.creation_date.toISOString().split('T')[0] : null;
+                        const formattedExpirationDate = values.expiration_date ? values.expiration_date.toISOString().split('T')[0] : null;
+
                         const newAccount = {
-                            key: Date.now().toString(),
                             name: values.name,
-                            company: values.company,
-                            type: values.type,
-                            balance: values.initial,
-                            pnl: 0,
-                            initial: values.initial,
-                            goal: values.goal,
-                            status: 'Activa',
-                            user_id: currentUser?.id,
-                            creation_date: values.creation_date ? values.creation_date.toISOString() : null,
-                            expiration_date: values.expiration_date ? values.expiration_date.toISOString() : null
+                            firm: values.company,
+                            balance: cleanBalance,
+                            goal: cleanGoal,
+                            creation_date: formattedCreationDate,
+                            expiration_date: formattedExpirationDate,
+                            user_id: currentUser?.id
                         };
 
-                        const { data, error } = await supabase.from('futures_accounts').insert([newAccount]).select();
+                        const { data, error } = await supabase.from('prop_accounts').insert([newAccount]).select();
                         if (!error && data) {
-                            setAccounts([...accounts, data[0]]);
+                            // Actualizar el estado local (adaptando de vuelta al formato visual esperado por la tabla actual si hiciera falta)
+                            const localAccount = {
+                                key: Date.now().toString(),
+                                id: data[0].id,
+                                name: data[0].name,
+                                company: data[0].firm,
+                                type: values.type || 'Evaluación',
+                                balance: data[0].balance,
+                                pnl: 0,
+                                initial: data[0].balance,
+                                goal: data[0].goal,
+                                status: 'Activa'
+                            };
+                            setAccounts([...accounts, localAccount]);
                             setIsNewModalVisible(false);
                             newForm.resetFields();
                             message.success(`Cuenta "${values.name}" creada exitosamente en Supabase`);
                         } else {
-                            message.error('Error al crear la cuenta nueva.');
+                            console.error(error);
+                            message.error('Error al crear la cuenta nueva. Revisa la consola para más detalles.');
                         }
                     });
                 };
