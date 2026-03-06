@@ -211,19 +211,27 @@
 
                 const handleLogin = async (values) => {
                     const { username, password } = values;
-                    let validUser = users.find(u => u.username === username && u.password === password);
+                    const cleanUsername = username.trim();
 
-                    if (validUser) {
+                    // Hacer query directo a Supabase para login en tiempo real
+                    const { data, error } = await supabase
+                        .from('users')
+                        .select('*')
+                        .ilike('username', cleanUsername)
+                        .eq('password', password);
+
+                    if (!error && data && data.length > 0) {
+                        const validUser = data[0];
                         setCurrentUser(validUser);
                         setIsAuthenticated(true);
                         setLoginError(false);
                         message.success(`Acceso autorizado. Bienvenido ${validUser.username}.`);
-                    } else if (username === 'admin' && password === 'futures2026' && users.length === 0) {
+                    } else if (cleanUsername.toLowerCase() === 'admin' && password === 'futures2026' && users.length === 0) {
                         // Crear usuario admin inicial si la tabla está vacía y se usan credenciales hardcodeadas
-                        const { data, error } = await supabase.from('users').insert([{ username: 'admin', password: 'futures2026', role: 'admin' }]).select();
-                        if (!error && data) {
-                            setCurrentUser(data[0]);
-                            setUsers([data[0]]);
+                        const { data: newData, error: newError } = await supabase.from('users').insert([{ username: 'admin', password: 'futures2026', role: 'admin' }]).select();
+                        if (!newError && newData) {
+                            setCurrentUser(newData[0]);
+                            setUsers([...users, newData[0]]);
                             setIsAuthenticated(true);
                             setLoginError(false);
                             message.success('Usuario admin inicial creado exitosamente. Bienvenido.');
