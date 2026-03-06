@@ -388,8 +388,10 @@
                             goal: cleanGoal,
                             creation_date: formattedCreationDate,
                             expiration_date: formattedExpirationDate,
-                            user_id: currentUser?.id
+                            user_id: currentUser?.username === 'Carlos' || currentUser?.id ? String(currentUser.id || 'Carlos') : null
                         };
+
+                        console.log("PAYLOAD ENVIADO A SUPABASE:", JSON.stringify(newAccount, null, 2));
 
                         const { data, error } = await supabase.from('prop_accounts').insert([newAccount]).select();
                         if (!error && data) {
