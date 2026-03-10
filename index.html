@@ -477,7 +477,9 @@
                 const handleLucidOk = () => {
                     lucidForm.validateFields().then(async (values) => {
                         const parsedPnl = parseFloat(values.dailyPnl);
-                        const parsedThreshold = parseFloat(values.threshold);
+                        const maxDrawdown = parseFloat(values.maxDrawdown);
+                        const drawdownType = values.drawdownType;
+
                         const acc = accounts.find(a => (a.key && a.key === values.accountKey) || (a.id && a.id === values.accountKey));
                         
                         if(!acc) {
@@ -486,7 +488,21 @@
                         }
 
                         const initial = acc.initial || (acc.balance - acc.pnl);
-                        let newStatus = acc.balance + parsedPnl >= initial ? 'Activa' : ((acc.balance + parsedPnl) < initial - 1000 ? 'Peligro' : 'Advertencia');
+                        const balanceNew = acc.balance + parsedPnl;
+                        let newStatus = balanceNew >= initial ? 'Activa' : (balanceNew < initial - 1000 ? 'Peligro' : 'Advertencia');
+
+                        let newThreshold;
+                        if (drawdownType === 'Fijo') {
+                            newThreshold = initial - maxDrawdown;
+                        } else if (drawdownType === 'EOD' || drawdownType === 'Trailing') {
+                            const calculatedThreshold = balanceNew - maxDrawdown;
+                            let cappedThreshold = calculatedThreshold;
+                            if (drawdownType === 'EOD') {
+                                cappedThreshold = Math.min(initial, calculatedThreshold);
+                            }
+                            const previousThreshold = acc.threshold || (initial - maxDrawdown);
+                            newThreshold = Math.max(previousThreshold, cappedThreshold);
+                        }
 
                         // Try updating futures_accounts first (as used by edit modal)
                         let tableName = 'futures_accounts';
@@ -497,13 +513,13 @@
                         const { error } = await supabase.from(tableName).update({
                             pnl: parsedPnl,
                             status: newStatus,
-                            threshold: parsedThreshold
+                            threshold: newThreshold
                         }).eq(eqKey, eqVal);
 
                         if (!error) {
                             const updatedAccounts = accounts.map(a => {
                                 if ((a.key && a.key === eqVal) || (a.id && a.id === eqVal)) {
-                                    return { ...a, pnl: parsedPnl, status: newStatus, threshold: parsedThreshold };
+                                    return { ...a, pnl: parsedPnl, status: newStatus, threshold: newThreshold };
                                 }
                                 return a;
                             });
@@ -516,13 +532,13 @@
                             const { error: err2 } = await supabase.from('prop_accounts').update({
                                 pnl: parsedPnl,
                                 status: newStatus,
-                                threshold: parsedThreshold
+                                threshold: newThreshold
                             }).eq(eqKey, eqVal);
 
                             if(!err2) {
                                 const updatedAccounts = accounts.map(a => {
                                     if ((a.key && a.key === eqVal) || (a.id && a.id === eqVal)) {
-                                        return { ...a, pnl: parsedPnl, status: newStatus, threshold: parsedThreshold };
+                                        return { ...a, pnl: parsedPnl, status: newStatus, threshold: newThreshold };
                                     }
                                     return a;
                                 });
@@ -633,6 +649,14 @@
                         render: (_, record) => {
                             const balanceNew = record.balance + record.pnl;
                             return <strong>${balanceNew.toLocaleString()}</strong>;
+                        }
+                    },
+                    {
+                        title: 'Precio Liquidación',
+                        key: 'thresholdValue',
+                        render: (_, record) => {
+                            if (!record.threshold) return <span>-</span>;
+                            return <span>${record.threshold.toLocaleString()}</span>;
                         }
                     },
                     {
@@ -1309,7 +1333,14 @@
                                 <Form.Item name="dailyPnl" label="P&L / Avance a Registrar ($)" rules={[{ required: true, message: 'Requerido' }]}>
                                     <InputNumber style={{ width: '100%' }} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
                                 </Form.Item>
-                                <Form.Item name="threshold" label="Precio de Liquidación EOD ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                <Form.Item name="drawdownType" label="Tipo de Drawdown" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Select placeholder="Selecciona el tipo">
+                                        <Select.Option value="EOD">EOD (End of Day)</Select.Option>
+                                        <Select.Option value="Trailing">Trailing</Select.Option>
+                                        <Select.Option value="Fijo">Fijo</Select.Option>
+                                    </Select>
+                                </Form.Item>
+                                <Form.Item name="maxDrawdown" label="Drawdown Máximo Permitido ($)" rules={[{ required: true, message: 'Requerido' }]}>
                                     <InputNumber style={{ width: '100%' }} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
                                 </Form.Item>
                             </Form>
