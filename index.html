@@ -110,43 +110,74 @@
             const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
             const App = () => {
+                // Auth State
+                const [isAuthenticated, setIsAuthenticated] = React.useState(false);
+                const [loginError, setLoginError] = React.useState(false);
+                const [users, setUsers] = React.useState([]);
+                const [currentUser, setCurrentUser] = React.useState(null);
+
+                // App State
                 const [accounts, setAccounts] = React.useState([]);
                 const [transactions, setTransactions] = React.useState([]);
+                const [activeMenu, setActiveMenu] = React.useState('dashboard');
+                const [propTradingData, setPropTradingData] = React.useState([]);
 
-                // Fetching accounts and transactions from Supabase
+                // Fetching functions
+                const fetchUsers = async () => {
+                    const { data, error } = await supabase.from('users').select('*');
+                    if (!error && data) setUsers(data);
+                };
+
                 const fetchAccounts = async () => {
-                    const { data, error } = await supabase.from('futures_accounts').select('*');
-                    if (!error && data && data.length > 0) {
-                        setAccounts(data);
+                    if (!currentUser) return;
+                    let query = supabase.from('prop_accounts').select('*');
+                    
+                    if (currentUser.username !== 'admin') {
+                        query = query.eq('user_id', currentUser.id);
+                    }
+
+                    const { data, error } = await query;
+                    if (!error && data) {
+                        // Map database fields to application state if they differ
+                        const mappedAccounts = data.map(acc => ({
+                            ...acc,
+                            key: acc.key || String(acc.id),
+                            company: acc.firm || acc.company,
+                            type: acc.type || 'Evaluación',
+                            pnl: acc.pnl || 0,
+                            status: acc.status || 'Activa'
+                        }));
+                        setAccounts(mappedAccounts);
+                    } else {
+                        setAccounts([]);
                     }
                 };
 
                 const fetchTransactions = async () => {
-                    const { data, error } = await supabase.from('transactions').select('*');
-                    if (!error && data) {
-                        setTransactions(data);
-                    }
+                    if (!currentUser) return;
+                    let query = supabase.from('transactions').select('*');
+                    const { data, error } = await query;
+                    if (!error && data) setTransactions(data);
                 };
-
-                React.useEffect(() => {
-                    fetchAccounts();
-                    fetchTransactions();
-                }, []);
-
-                const [activeMenu, setActiveMenu] = React.useState('dashboard');
-
-                const [propTradingData, setPropTradingData] = React.useState([]);
 
                 const fetchPropTradingData = async () => {
-                    const { data, error } = await supabase.from('cfd_accounts').select('*');
-                    if (!error && data) {
-                        setPropTradingData(data);
-                    }
+                    if (!currentUser) return;
+                    let query = supabase.from('cfd_accounts').select('*');
+                    const { data, error } = await query;
+                    if (!error && data) setPropTradingData(data);
                 };
 
                 React.useEffect(() => {
-                    fetchPropTradingData();
+                    fetchUsers();
                 }, []);
+
+                React.useEffect(() => {
+                    if (isAuthenticated && currentUser) {
+                        fetchAccounts();
+                        fetchTransactions();
+                        fetchPropTradingData();
+                    }
+                }, [isAuthenticated, currentUser]);
 
                 const [isPropModalVisible, setIsPropModalVisible] = React.useState(false);
                 const [propForm] = Form.useForm();
@@ -187,23 +218,6 @@
                         message.error('Error al eliminar cuenta Prop.');
                     }
                 };
-
-                // localStorage syncs replaced with Supabase useEffects above
-
-                const [isAuthenticated, setIsAuthenticated] = React.useState(false);
-                const [loginError, setLoginError] = React.useState(false);
-
-                const [users, setUsers] = React.useState([]);
-                const [currentUser, setCurrentUser] = React.useState(null);
-
-                const fetchUsers = async () => {
-                    const { data, error } = await supabase.from('users').select('*');
-                    if (!error && data) setUsers(data);
-                };
-
-                React.useEffect(() => {
-                    fetchUsers();
-                }, []);
 
                 const handleLogin = async (values) => {
                     const { username, password } = values;
@@ -324,7 +338,7 @@
                             goal: values.goal
                         };
 
-                        const { error } = await supabase.from('futures_accounts').update(updatedAccount).eq('key', editingAccount.key);
+                        const { error } = await supabase.from('prop_accounts').update(updatedAccount).eq('key', editingAccount.key);
 
                         if (!error) {
                             const updatedAccountsList = accounts.map(acc => {
@@ -355,7 +369,7 @@
                             okType: 'danger',
                             cancelText: 'Cancelar',
                             async onOk() {
-                                const { error } = await supabase.from('futures_accounts').delete().eq('key', editingAccount.key);
+                                const { error } = await supabase.from('prop_accounts').delete().eq('key', editingAccount.key);
                                 if (!error) {
                                     const updatedAccounts = accounts.filter(acc => acc.key !== editingAccount.key);
                                     setAccounts(updatedAccounts);
@@ -378,11 +392,14 @@
                         // Conversión de Fechas: ISO YYYY-MM-DD
                         const formattedCreationDate = values.creation_date ? values.creation_date.toISOString().split('T')[0] : null;
                         const formattedExpirationDate = values.expiration_date ? values.expiration_date.toISOString().split('T')[0] : null;
-
                         const newAccount = {
+                            key: Date.now().toString(),
                             name: values.name,
                             firm: values.company,
+                            type: values.type || 'Evaluación',
                             balance: cleanBalance,
+                            pnl: 0,
+                            status: 'Activa',
                             goal: cleanGoal,
                             drawdown_type: values.drawdownType,
                             max_drawdown: parseFloat(values.maxDrawdown),
@@ -398,19 +415,19 @@
                         if (!error && data) {
                             // Actualizar el estado local (adaptando de vuelta al formato visual esperado por la tabla actual si hiciera falta)
                             const localAccount = {
-                                key: Date.now().toString(),
+                                key: data[0].key || Date.now().toString(),
                                 id: data[0].id,
                                 name: data[0].name,
-                                company: data[0].firm,
-                                type: values.type || 'Evaluación',
+                                company: data[0].firm || data[0].company,
+                                type: data[0].type || 'Evaluación',
                                 balance: data[0].balance,
-                                pnl: 0,
+                                pnl: data[0].pnl || 0,
                                 initial: data[0].balance,
                                 goal: data[0].goal,
                                 drawdown_type: data[0].drawdown_type,
                                 max_drawdown: data[0].max_drawdown,
                                 threshold: data[0].threshold,
-                                status: 'Activa'
+                                status: data[0].status || 'Activa'
                             };
                             setAccounts([...accounts, localAccount]);
                             setIsNewModalVisible(false);
@@ -511,9 +528,8 @@
                             newThreshold = Math.max(previousThreshold, cappedThreshold);
                         }
 
-                        // Try updating futures_accounts first (as used by edit modal)
-                        let tableName = 'futures_accounts';
-                        // if account has id and not key it might be from prop_accounts, but we'll try futures_accounts as primary
+                        // We now exclusively update prop_accounts
+                        let tableName = 'prop_accounts';
                         const eqKey = acc.key ? 'key' : 'id';
                         const eqVal = acc.key || acc.id;
 
@@ -535,27 +551,7 @@
                             lucidForm.resetFields();
                             message.success('Avance registrado correctamente en Supabase');
                         } else {
-                            // Fallback if the account is in prop_accounts instead
-                            const { error: err2 } = await supabase.from('prop_accounts').update({
-                                pnl: parsedPnl,
-                                status: newStatus,
-                                threshold: newThreshold
-                            }).eq(eqKey, eqVal);
-
-                            if(!err2) {
-                                const updatedAccounts = accounts.map(a => {
-                                    if ((a.key && a.key === eqVal) || (a.id && a.id === eqVal)) {
-                                        return { ...a, pnl: parsedPnl, status: newStatus, threshold: newThreshold };
-                                    }
-                                    return a;
-                                });
-                                setAccounts(updatedAccounts);
-                                setIsLucidModalVisible(false);
-                                lucidForm.resetFields();
-                                message.success('Avance registrado correctamente en Supabase');
-                            } else {
-                                message.error('Error al registrar el avance: ' + error.message);
-                            }
+                            message.error('Error al registrar el avance: ' + error.message);
                         }
                     });
                 };
@@ -970,17 +966,6 @@
                                                     onClick={() => setIsNewModalVisible(true)}
                                                 >
                                                     Nueva Cuenta
-                                                </Button>
-                                                <Button
-                                                    danger
-                                                    onClick={() => {
-                                                        if (window.confirm('¿Estás seguro de que quieres limpiar el LocalStorage y reiniciar las cuentas?')) {
-                                                            localStorage.removeItem('edgy-futures-accounts');
-                                                            window.location.reload();
-                                                        }
-                                                    }}
-                                                >
-                                                    Resetear Todo
                                                 </Button>
                                             </Space>
                                         </div>
