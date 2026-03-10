@@ -198,17 +198,30 @@
 
                 const handlePropSubmit = async (values) => {
                     const balance = values.balance || 0;
-                    const dailyPercent = values.dailyDrawdownPercent || 0;
-                    const totalPercent = values.totalDrawdownPercent || 0;
+                    
+                    // Limpieza y parseo a número de los porcentajes
+                    const rawDaily = values.dailyDrawdownPercent ? String(values.dailyDrawdownPercent).replace('%', '') : '0';
+                    const dailyPercent = parseFloat(rawDaily);
+
+                    const rawTotal = values.totalDrawdownPercent ? String(values.totalDrawdownPercent).replace('%', '') : '0';
+                    const totalPercent = parseFloat(rawTotal);
                     
                     const dailyLossPrice = balance - (balance * dailyPercent / 100);
                     const totalThreshold = balance - (balance * totalPercent / 100);
 
                     const newAcc = { 
-                        ...values, 
+                        firm: values.firm,
+                        name: values.name,
+                        type: values.type,
+                        balance: balance,
+                        pnlDiario: values.pnlDiario || 0,
+                        goal: values.goal || null,
                         id: Date.now().toString(),
-                        daily_loss_price: dailyLossPrice,
-                        total_threshold: totalThreshold
+                        daily_drawdown_pct: dailyPercent,
+                        total_drawdown_pct: totalPercent,
+                        drawdown_type: values.drawdownType || 'Fijo',
+                        daily_loss_limit: dailyLossPrice,
+                        total_loss_limit: totalThreshold
                     };
                     const { data, error } = await supabase.from('cfd_accounts').insert([newAcc]).select();
                     if (!error && data) {
@@ -1056,23 +1069,23 @@
                                                             { title: 'P&L Diario', dataIndex: 'pnlDiario', key: 'pnlDiario', render: val => <span style={{ color: val >= 0 ? '#3f8600' : '#cf1322', fontWeight: 600 }}>{val >= 0 ? '+' : '-'}${Math.abs(val).toLocaleString()}</span> },
                                                             { title: 'Balance New', key: 'newBal', render: (_, record) => { const bal = record.balance + record.pnlDiario; return <strong>$ {bal.toLocaleString()}</strong> } },
                                                             { title: 'Salud Diaria', key: 'dailyHealth', render: (_, record) => {
-                                                                if (!record.dailyDrawdownPercent) return '-';
-                                                                const allowedLoss = record.balance * (record.dailyDrawdownPercent / 100);
+                                                                if (!record.daily_drawdown_pct) return '-';
+                                                                const allowedLoss = record.balance * (record.daily_drawdown_pct / 100);
                                                                 const currentLoss = record.pnlDiario < 0 ? Math.abs(record.pnlDiario) : 0;
                                                                 const healthPercent = Math.max(0, 100 - ((currentLoss / allowedLoss) * 100));
                                                                 return (
-                                                                    <div style={{ width: 100 }} title={`Precio de Pérdida Diaria: $${record.daily_loss_price?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
+                                                                    <div style={{ width: 100 }} title={`Precio de Pérdida Diaria: $${record.daily_loss_limit?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
                                                                         <Progress percent={parseFloat(healthPercent.toFixed(1))} strokeColor={healthPercent > 50 ? '#52c41a' : (healthPercent > 20 ? '#faad14' : '#f5222d')} />
                                                                     </div>
                                                                 );
                                                             }},
                                                             { title: 'Salud Total', key: 'totalHealth', render: (_, record) => {
-                                                                if (!record.totalDrawdownPercent) return '-';
-                                                                const allowedLoss = record.balance * (record.totalDrawdownPercent / 100);
+                                                                if (!record.total_drawdown_pct) return '-';
+                                                                const allowedLoss = record.balance * (record.total_drawdown_pct / 100);
                                                                 const currentLoss = record.pnlDiario < 0 ? Math.abs(record.pnlDiario) : 0;
                                                                 const healthPercent = Math.max(0, 100 - ((currentLoss / allowedLoss) * 100));
                                                                 return (
-                                                                    <div style={{ width: 100 }} title={`Threshold Total: $${record.total_threshold?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
+                                                                    <div style={{ width: 100 }} title={`Threshold Total: $${record.total_loss_limit?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
                                                                         <Progress percent={parseFloat(healthPercent.toFixed(1))} strokeColor={healthPercent > 50 ? '#52c41a' : (healthPercent > 20 ? '#faad14' : '#f5222d')} />
                                                                     </div>
                                                                 );
