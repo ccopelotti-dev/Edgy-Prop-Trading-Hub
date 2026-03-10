@@ -197,7 +197,19 @@
                 };
 
                 const handlePropSubmit = async (values) => {
-                    const newAcc = { ...values, id: Date.now().toString() };
+                    const balance = values.balance || 0;
+                    const dailyPercent = values.dailyDrawdownPercent || 0;
+                    const totalPercent = values.totalDrawdownPercent || 0;
+                    
+                    const dailyLossPrice = balance - (balance * dailyPercent / 100);
+                    const totalThreshold = balance - (balance * totalPercent / 100);
+
+                    const newAcc = { 
+                        ...values, 
+                        id: Date.now().toString(),
+                        daily_loss_price: dailyLossPrice,
+                        total_threshold: totalThreshold
+                    };
                     const { data, error } = await supabase.from('cfd_accounts').insert([newAcc]).select();
                     if (!error && data) {
                         setPropTradingData([...propTradingData, data[0]]);
@@ -1043,6 +1055,28 @@
                                                             { title: 'Balance Inicial', dataIndex: 'balance', key: 'balance', render: val => `$ ${val.toLocaleString()}` },
                                                             { title: 'P&L Diario', dataIndex: 'pnlDiario', key: 'pnlDiario', render: val => <span style={{ color: val >= 0 ? '#3f8600' : '#cf1322', fontWeight: 600 }}>{val >= 0 ? '+' : '-'}${Math.abs(val).toLocaleString()}</span> },
                                                             { title: 'Balance New', key: 'newBal', render: (_, record) => { const bal = record.balance + record.pnlDiario; return <strong>$ {bal.toLocaleString()}</strong> } },
+                                                            { title: 'Salud Diaria', key: 'dailyHealth', render: (_, record) => {
+                                                                if (!record.dailyDrawdownPercent) return '-';
+                                                                const allowedLoss = record.balance * (record.dailyDrawdownPercent / 100);
+                                                                const currentLoss = record.pnlDiario < 0 ? Math.abs(record.pnlDiario) : 0;
+                                                                const healthPercent = Math.max(0, 100 - ((currentLoss / allowedLoss) * 100));
+                                                                return (
+                                                                    <div style={{ width: 100 }} title={`Precio de Pérdida Diaria: $${record.daily_loss_price?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
+                                                                        <Progress percent={parseFloat(healthPercent.toFixed(1))} strokeColor={healthPercent > 50 ? '#52c41a' : (healthPercent > 20 ? '#faad14' : '#f5222d')} />
+                                                                    </div>
+                                                                );
+                                                            }},
+                                                            { title: 'Salud Total', key: 'totalHealth', render: (_, record) => {
+                                                                if (!record.totalDrawdownPercent) return '-';
+                                                                const allowedLoss = record.balance * (record.totalDrawdownPercent / 100);
+                                                                const currentLoss = record.pnlDiario < 0 ? Math.abs(record.pnlDiario) : 0;
+                                                                const healthPercent = Math.max(0, 100 - ((currentLoss / allowedLoss) * 100));
+                                                                return (
+                                                                    <div style={{ width: 100 }} title={`Threshold Total: $${record.total_threshold?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
+                                                                        <Progress percent={parseFloat(healthPercent.toFixed(1))} strokeColor={healthPercent > 50 ? '#52c41a' : (healthPercent > 20 ? '#faad14' : '#f5222d')} />
+                                                                    </div>
+                                                                );
+                                                            }},
                                                             { title: 'Meta / Retiro', dataIndex: 'goal', key: 'goal', render: val => val ? `$ ${val.toLocaleString()}` : '-' },
                                                             {
                                                                 title: 'Progreso', key: 'prog', render: (_, record) => {
@@ -1380,6 +1414,26 @@
                                     <Col span={8}>
                                         <Form.Item name="goal" label="Meta / Retiro" rules={[{ required: true, message: 'Requerido' }]}>
                                             <InputNumber style={{ width: '100%' }} />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Row gutter={16}>
+                                    <Col span={8}>
+                                        <Form.Item name="dailyDrawdownPercent" label="% DD Diario Máx" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} min={0} max={100} formatter={value => `${value}%`} parser={value => value.replace('%', '')} />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={8}>
+                                        <Form.Item name="totalDrawdownPercent" label="% DD Total Máx" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <InputNumber style={{ width: '100%' }} min={0} max={100} formatter={value => `${value}%`} parser={value => value.replace('%', '')} />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={8}>
+                                        <Form.Item name="drawdownType" label="Tipo de Drawdown" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Select placeholder="Seleccione">
+                                                <Select.Option value="Fijo">Fijo</Select.Option>
+                                                <Select.Option value="Balance Equity">Balance Equity</Select.Option>
+                                            </Select>
                                         </Form.Item>
                                     </Col>
                                 </Row>
