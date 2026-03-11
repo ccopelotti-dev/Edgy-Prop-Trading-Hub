@@ -215,7 +215,7 @@
                         name: values.name,
                         type: values.type,
                         balance: balance,
-                        pnlDiario: Number(values.pnlDiario) || 0,
+                        pnl_diario: Number(values.pnlDiario) || 0,
                         goal: Number(values.goal) || 0,
                         daily_drawdown_pct: dailyPercent,
                         total_drawdown_pct: totalPercent,
@@ -1070,12 +1070,12 @@
                                                             { title: 'Compañía', dataIndex: 'firm', key: 'firm' },
                                                             { title: 'Nombre', dataIndex: 'name', key: 'name', render: (text) => <strong>{text}</strong> },
                                                             { title: 'Balance Inicial', dataIndex: 'balance', key: 'balance', render: val => `$ ${val.toLocaleString()}` },
-                                                            { title: 'P&L Diario', dataIndex: 'pnlDiario', key: 'pnlDiario', render: val => <span style={{ color: val >= 0 ? '#3f8600' : '#cf1322', fontWeight: 600 }}>{val >= 0 ? '+' : '-'}${Math.abs(val).toLocaleString()}</span> },
-                                                            { title: 'Balance New', key: 'newBal', render: (_, record) => { const bal = record.balance + record.pnlDiario; return <strong>$ {bal.toLocaleString()}</strong> } },
+                                                            { title: 'P&L Diario', dataIndex: 'pnl_diario', key: 'pnl_diario', render: val => <span style={{ color: val >= 0 ? '#3f8600' : '#cf1322', fontWeight: 600 }}>{val >= 0 ? '+' : '-'}${Math.abs(val || 0).toLocaleString()}</span> },
+                                                            { title: 'Balance New', key: 'newBal', render: (_, record) => { const bal = record.balance + (record.pnl_diario || 0); return <strong>$ {bal.toLocaleString()}</strong> } },
                                                             { title: 'Salud Diaria', key: 'dailyHealth', render: (_, record) => {
                                                                 if (!record.daily_drawdown_pct) return '-';
                                                                 const allowedLoss = record.balance * (record.daily_drawdown_pct / 100);
-                                                                const currentLoss = record.pnlDiario < 0 ? Math.abs(record.pnlDiario) : 0;
+                                                                const currentLoss = (record.pnl_diario || 0) < 0 ? Math.abs(record.pnl_diario) : 0;
                                                                 const healthPercent = Math.max(0, 100 - ((currentLoss / allowedLoss) * 100));
                                                                 return (
                                                                     <div style={{ width: 100 }} title={`Precio de Pérdida Diaria: $${record.daily_loss_limit?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
@@ -1086,7 +1086,7 @@
                                                             { title: 'Salud Total', key: 'totalHealth', render: (_, record) => {
                                                                 if (!record.total_drawdown_pct) return '-';
                                                                 const allowedLoss = record.balance * (record.total_drawdown_pct / 100);
-                                                                const currentLoss = record.pnlDiario < 0 ? Math.abs(record.pnlDiario) : 0;
+                                                                const currentLoss = (record.pnl_diario || 0) < 0 ? Math.abs(record.pnl_diario) : 0;
                                                                 const healthPercent = Math.max(0, 100 - ((currentLoss / allowedLoss) * 100));
                                                                 return (
                                                                     <div style={{ width: 100 }} title={`Threshold Total: $${record.total_loss_limit?.toLocaleString() || (record.balance - allowedLoss).toLocaleString()}`}>
@@ -1097,12 +1097,12 @@
                                                             { title: 'Meta / Retiro', dataIndex: 'goal', key: 'goal', render: val => val ? `$ ${val.toLocaleString()}` : '-' },
                                                             {
                                                                 title: 'Progreso', key: 'prog', render: (_, record) => {
-                                                                    let percent = getProgressPercent(record.balance + record.pnlDiario, record.balance, record.goal);
+                                                                    let percent = getProgressPercent(record.balance + (record.pnl_diario || 0), record.balance, record.goal);
                                                                     const exactPercent = percent.toFixed(1);
                                                                     let percentUI = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
                                                                     return (
                                                                         <div style={{ width: 140 }}>
-                                                                            <Progress percent={percentUI} format={() => `${exactPercent}%`} status={record.pnlDiario < 0 ? 'exception' : 'active'} strokeColor={record.pnlDiario >= 0 ? getProgressColor(percent) : undefined} />
+                                                                            <Progress percent={percentUI} format={() => `${exactPercent}%`} status={(record.pnl_diario || 0) < 0 ? 'exception' : 'active'} strokeColor={(record.pnl_diario || 0) >= 0 ? getProgressColor(percent) : undefined} />
                                                                         </div>
                                                                     );
                                                                 }
