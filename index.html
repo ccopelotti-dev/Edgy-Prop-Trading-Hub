@@ -155,7 +155,10 @@
 
                 const fetchTransactions = async () => {
                     if (!currentUser) return;
-                    let query = supabase.from('transactions').select('*');
+                    let query = supabase.from('accounting')
+                        .select('*')
+                        .eq('user_id', currentUser.id)
+                        .order('transaction_date', { ascending: false });
                     const { data, error } = await query;
                     if (!error && data) setTransactions(data);
                 };
@@ -322,8 +325,7 @@
 
                 const [isModalVisible, setIsModalVisible] = React.useState(false);
                 const [isNewModalVisible, setIsNewModalVisible] = React.useState(false);
-                const [isExpenseModalVisible, setIsExpenseModalVisible] = React.useState(false);
-                const [isIncomeModalVisible, setIsIncomeModalVisible] = React.useState(false);
+                const [isMicroModalVisible, setIsMicroModalVisible] = React.useState(false);
                 const [isLucidModalVisible, setIsLucidModalVisible] = React.useState(false);
                 const [isCfdCargaVisible, setIsCfdCargaVisible] = React.useState(false);
                 const [isCfdImportVisible, setIsCfdImportVisible] = React.useState(false);
@@ -331,16 +333,11 @@
                 const [editingAccount, setEditingAccount] = React.useState(null);
                 const [form] = Form.useForm();
                 const [newForm] = Form.useForm();
-                const [expenseForm] = Form.useForm();
-                const [incomeForm] = Form.useForm();
+                const [microForm] = Form.useForm();
                 const [lucidForm] = Form.useForm();
                 const [cfdCargaForm] = Form.useForm();
                 const [cfdImportForm] = Form.useForm();
                 const fileInputRef = React.useRef(null);
-
-                // Watch currency to show/hide exchange rate
-                const expenseCurrency = Form.useWatch('currency', expenseForm);
-                const expenseCategory = Form.useWatch('category', expenseForm);
 
                 const handleEdit = (record) => {
                     setEditingAccount(record);
@@ -473,62 +470,30 @@
                     });
                 };
 
-                const handleExpenseOk = () => {
-                    expenseForm.validateFields().then(async (values) => {
-                        let exchangeRate = values.currency === 'ARS' ? (values.exchangeRate || 1) : 1;
-                        let finalUsdAmount = values.currency === 'ARS' ? (values.originalAmount / exchangeRate) : values.originalAmount;
-
+                const handleMicroSubmit = () => {
+                    microForm.validateFields().then(async (values) => {
                         const newTx = {
-                            id: Date.now().toString(),
-                            type: 'EXPENSE',
-                            category: values.category,
-                            description: values.description,
-                            currency: values.currency,
-                            originalAmount: values.originalAmount,
-                            exchangeRate: exchangeRate,
-                            amount: finalUsdAmount,
-                            usefulLifeMonths: values.category === 'Activos Amortizables' ? values.usefulLifeMonths : null,
-                            date: new Date().toISOString()
+                            user_id: currentUser.id,
+                            type: values.type,
+                            amount: Number(values.amount) || 0,
+                            category: values.category || 'General',
+                            description: values.description || '',
+                            transaction_date: values.transaction_date ? values.transaction_date.toISOString() : new Date().toISOString()
                         };
 
-                        const { data, error } = await supabase.from('transactions').insert([newTx]).select();
-                        if (!error && data) {
-                            setTransactions([...transactions, data[0]]);
-                            setIsExpenseModalVisible(false);
-                            expenseForm.resetFields();
-                            message.success('Gasto registrado correctamente en Supabase');
+                        const { data, error } = await supabase.from('accounting').insert([newTx]).select();
+                        if (!error && data && data.length > 0) {
+                            setTransactions([data[0], ...transactions]);
+                            setIsMicroModalVisible(false);
+                            microForm.resetFields();
+                            message.success('Movimiento registrado correctamente.');
                         } else {
-                            message.error('Error al registrar el gasto.');
+                            console.error('Error al insertar movimiento:', error);
+                            message.error('Error al registrar el movimiento.');
                         }
                     });
                 };
 
-                const handleIncomeOk = () => {
-                    incomeForm.validateFields().then(async (values) => {
-                        const newTx = {
-                            id: Date.now().toString(),
-                            type: 'INCOME',
-                            category: 'Retiro',
-                            sourceAccount: values.sourceAccount,
-                            description: values.description,
-                            currency: 'USD',
-                            originalAmount: values.amount,
-                            exchangeRate: 1,
-                            amount: values.amount,
-                            date: new Date().toISOString()
-                        };
-
-                        const { data, error } = await supabase.from('transactions').insert([newTx]).select();
-                        if (!error && data) {
-                            setTransactions([...transactions, data[0]]);
-                            setIsIncomeModalVisible(false);
-                            incomeForm.resetFields();
-                            message.success('Cobro/Retiro registrado correctamente en Supabase');
-                        } else {
-                            message.error('Error al registrar el cobro/retiro.');
-                        }
-                    });
-                };
 
                 const handleLucidOk = () => {
                     lucidForm.validateFields().then(async (values) => {
@@ -1392,17 +1357,93 @@
                                                 <Text type="secondary" style={{ fontSize: 16 }}>Dashboard corporativo de flujo de caja y rentabilidad.</Text>
                                             </div>
                                             <Space>
-                                                <Button type="primary" icon={PlusOutlined && <PlusOutlined />}>
+                                                <Button type="primary" icon={PlusOutlined && <PlusOutlined />} onClick={() => setIsMicroModalVisible(true)}>
                                                     Registrar Movimiento
                                                 </Button>
                                             </Space>
                                         </div>
-                                        <Card className="premium-card">
-                                            <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8c8c' }}>
-                                                <WalletOutlined style={{ fontSize: 48, color: '#d9d9d9', marginBottom: 16 }} />
-                                                <Title level={4} style={{ color: '#8c8c8c' }}>Módulo de Microcontabilidad en Construcción</Title>
-                                                <Text>Aquí podrás visualizar el desglose de ingresos, egresos y el análisis de tu capital de trabajo.</Text>
-                                            </div>
+
+                                        {/* Tarjetas de Resumen */}
+                                        <Row gutter={16} style={{ marginBottom: 24 }}>
+                                            <Col span={8}>
+                                                <Card className="premium-card">
+                                                    <Statistic
+                                                        title="Total Ingresos"
+                                                        value={transactions.filter(t => t.type === 'Ingreso').reduce((sum, t) => sum + (Number(t.amount) || 0), 0)}
+                                                        precision={2}
+                                                        valueStyle={{ color: '#3f8600' }}
+                                                        prefix={RiseOutlined && <RiseOutlined />}
+                                                        suffix="USD"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Card className="premium-card">
+                                                    <Statistic
+                                                        title="Total Egresos"
+                                                        value={transactions.filter(t => t.type === 'Egreso').reduce((sum, t) => sum + (Number(t.amount) || 0), 0)}
+                                                        precision={2}
+                                                        valueStyle={{ color: '#cf1322' }}
+                                                        prefix={FallOutlined && <FallOutlined />}
+                                                        suffix="USD"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Card className="premium-card">
+                                                    <Statistic
+                                                        title="Saldo Actual (Capital)"
+                                                        value={transactions.filter(t => t.type === 'Ingreso').reduce((sum, t) => sum + (Number(t.amount) || 0), 0) - transactions.filter(t => t.type === 'Egreso').reduce((sum, t) => sum + (Number(t.amount) || 0), 0)}
+                                                        precision={2}
+                                                        valueStyle={{ color: '#1677ff' }}
+                                                        prefix={WalletOutlined && <WalletOutlined />}
+                                                        suffix="USD"
+                                                    />
+                                                </Card>
+                                            </Col>
+                                        </Row>
+
+                                        {/* Tabla de Movimientos */}
+                                        <Card title={<span style={{ fontSize: 18, color: PRIMARY_COLOR }}>Historial de Movimientos</span>} className="premium-card">
+                                            <Table
+                                                dataSource={transactions}
+                                                rowKey={(record) => record.id || record.transaction_date}
+                                                pagination={{ pageSize: 10 }}
+                                                columns={[
+                                                    { 
+                                                        title: 'Fecha', 
+                                                        dataIndex: 'transaction_date', 
+                                                        key: 'transaction_date', 
+                                                        render: text => text ? new Date(text).toLocaleDateString() : '-' 
+                                                    },
+                                                    { 
+                                                        title: 'Tipo', 
+                                                        dataIndex: 'type', 
+                                                        key: 'type', 
+                                                        render: type => {
+                                                            const color = type === 'Ingreso' ? 'success' : 'error';
+                                                            const Icon = type === 'Ingreso' ? (RiseOutlined ? <RiseOutlined /> : null) : (FallOutlined ? <FallOutlined /> : null);
+                                                            return (
+                                                                <Tag color={color}>
+                                                                    {Icon} {type ? type.toUpperCase() : ''}
+                                                                </Tag>
+                                                            );
+                                                        }
+                                                    },
+                                                    { title: 'Categoría', dataIndex: 'category', key: 'category' },
+                                                    { title: 'Descripción', dataIndex: 'description', key: 'description' },
+                                                    { 
+                                                        title: 'Monto ($)', 
+                                                        dataIndex: 'amount', 
+                                                        key: 'amount', 
+                                                        render: (amount, record) => (
+                                                            <strong style={{ color: record.type === 'Ingreso' ? '#3f8600' : '#cf1322' }}>
+                                                                {record.type === 'Ingreso' ? '+' : '-'}${Number(amount).toFixed(2)}
+                                                            </strong>
+                                                        )
+                                                    }
+                                                ]}
+                                            />
                                         </Card>
                                     </div>
 
@@ -1549,84 +1590,48 @@
                             </Form>
                         </Modal>
 
-                        {/* Modal para Registrar Gasto */}
+                        {/* Modal para Registrar Movimiento */}
                         <Modal
-                            title="Registrar Nuevo Gasto"
-                            open={isExpenseModalVisible}
-                            onOk={handleExpenseOk}
-                            onCancel={() => { setIsExpenseModalVisible(false); expenseForm.resetFields(); }}
-                            okText="Guardar Gasto"
+                            title="Registrar Movimiento Contable"
+                            open={isMicroModalVisible}
+                            onOk={handleMicroSubmit}
+                            onCancel={() => { setIsMicroModalVisible(false); microForm.resetFields(); }}
+                            okText="Guardar Movimiento"
                             cancelText="Cancelar"
                             width={500}
                         >
-                            <Form form={expenseForm} layout="vertical" initialValues={{ currency: 'USD' }}>
-                                <Form.Item name="category" label="Categoría" rules={[{ required: true, message: 'Selecciona una categoría' }]}>
-                                    <Select placeholder="Selecciona el tipo de gasto">
-                                        <Select.Option value="Capital de Trabajo">Capital de Trabajo (Ej. Evaluaciones)</Select.Option>
-                                        <Select.Option value="Servicios">Servicios (Ej. Internet, Software)</Select.Option>
-                                        <Select.Option value="Activos Amortizables">Activos Amortizables (Ej. Hardware, PC)</Select.Option>
-                                    </Select>
-                                </Form.Item>
-
-                                <Form.Item name="description" label="Descripción" rules={[{ required: true, message: 'Requerido' }]}>
-                                    <Input placeholder="Ej. Prueba Apex 50k" />
-                                </Form.Item>
-
+                            <Form form={microForm} layout="vertical" initialValues={{ type: 'Ingreso', category: 'Capital de Trabajo' }}>
                                 <Row gutter={16}>
                                     <Col span={12}>
-                                        <Form.Item name="currency" label="Moneda" rules={[{ required: true, message: 'Requerido' }]}>
+                                        <Form.Item name="type" label="Tipo de Movimiento" rules={[{ required: true, message: 'Requerido' }]}>
                                             <Select>
-                                                <Select.Option value="USD">USD ($)</Select.Option>
-                                                <Select.Option value="ARS">ARS ($)</Select.Option>
+                                                <Select.Option value="Ingreso">Ingreso (+)</Select.Option>
+                                                <Select.Option value="Egreso">Egreso (-)</Select.Option>
                                             </Select>
                                         </Form.Item>
                                     </Col>
                                     <Col span={12}>
-                                        <Form.Item name="originalAmount" label="Monto Original" rules={[{ required: true, message: 'Requerido' }]}>
-                                            <InputNumber style={{ width: '100%' }} min={0} />
+                                        <Form.Item name="category" label="Categoría" rules={[{ required: true, message: 'Requerido' }]}>
+                                            <Select>
+                                                <Select.Option value="Capital de Trabajo">Capital de Trabajo (Ej. Evaluaciones)</Select.Option>
+                                                <Select.Option value="Retiros">Retiros (Payouts)</Select.Option>
+                                                <Select.Option value="Servicios">Servicios (Ej. Internet, Software)</Select.Option>
+                                                <Select.Option value="Varios">Varios (Otros)</Select.Option>
+                                            </Select>
                                         </Form.Item>
                                     </Col>
                                 </Row>
 
-                                {expenseCurrency === 'ARS' && (
-                                    <Form.Item name="exchangeRate" label="Tipo de Cambio (ARS por cada 1 USD)" rules={[{ required: true, message: 'Requerido' }]}>
-                                        <InputNumber style={{ width: '100%' }} min={1} placeholder="Ej. 1200" />
-                                    </Form.Item>
-                                )}
-
-                                {expenseCategory === 'Activos Amortizables' && (
-                                    <Form.Item name="usefulLifeMonths" label="Vida útil (en meses)" rules={[{ required: true, message: 'Requerido para amortizar' }]}>
-                                        <InputNumber style={{ width: '100%' }} min={1} max={120} placeholder="Ej. 12" />
-                                    </Form.Item>
-                                )}
-                            </Form>
-                        </Modal>
-
-                        {/* Modal para Registrar Cobro/Retiro */}
-                        <Modal
-                            title="Registrar Nuevo Cobro (Retiro)"
-                            open={isIncomeModalVisible}
-                            onOk={handleIncomeOk}
-                            onCancel={() => { setIsIncomeModalVisible(false); incomeForm.resetFields(); }}
-                            okText="Guardar Cobro"
-                            cancelText="Cancelar"
-                            width={500}
-                        >
-                            <Form form={incomeForm} layout="vertical">
-                                <Form.Item name="sourceAccount" label="Cuenta Origen (Solo Master/Live)" rules={[{ required: true, message: 'Requerido' }]}>
-                                    <Select placeholder="Selecciona de dónde provienen los fondos">
-                                        {accounts.filter(a => a.type === 'Master' || a.type === 'Live').map(acc => (
-                                            <Select.Option key={acc.key} value={acc.name}>{acc.name} ({acc.company})</Select.Option>
-                                        ))}
-                                    </Select>
+                                <Form.Item name="amount" label="Monto en USD ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <InputNumber style={{ width: '100%' }} min={0.01} step={1} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
                                 </Form.Item>
 
-                                <Form.Item name="description" label="Descripción / Motivo" rules={[{ required: true, message: 'Requerido' }]}>
-                                    <Input placeholder="Ej. Primer Retiro Tradeify" />
+                                <Form.Item name="description" label="Descripción / Concepto" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Input placeholder="Ej. Retiro PA Tradeify #1" />
                                 </Form.Item>
 
-                                <Form.Item name="amount" label="Monto Retirado (USD)" rules={[{ required: true, message: 'Requerido' }]}>
-                                    <InputNumber style={{ width: '100%' }} min={0} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} />
+                                <Form.Item name="transaction_date" label="Fecha del Movimiento (Opcional)">
+                                    <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY HH:mm" showTime placeholder="Por defecto será ahora mismo si dejas en blanco" />
                                 </Form.Item>
                             </Form>
                         </Modal>
