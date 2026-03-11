@@ -1081,7 +1081,7 @@
                                         { key: 'prop_trading_cfd', icon: DashboardOutlined && <DashboardOutlined />, label: 'Prop Trading CFD' },
                                         { key: '2', icon: LineChartOutlined && <LineChartOutlined />, label: 'Análisis de Trading' },
                                         { key: '3', icon: BankOutlined && <BankOutlined />, label: 'Cuentas' },
-                                        { key: '4', icon: WalletOutlined && <WalletOutlined />, label: 'Retiros' },
+                                        { key: 'microcontabilidad', icon: WalletOutlined && <WalletOutlined />, label: 'Microcontabilidad' },
                                         { type: 'divider' },
                                         { key: 'configuracion', icon: UserOutlined && <UserOutlined />, label: 'Configuración' },
                                         { type: 'divider' },
@@ -1381,6 +1381,28 @@
                                                     }
                                                 ]}
                                             />
+                                        </Card>
+                                    </div>
+
+                                    {/* MICROCONTABILIDAD View */}
+                                    <div style={{ display: activeMenu === 'microcontabilidad' ? 'block' : 'none' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                                            <div>
+                                                <Title level={2} style={{ marginBottom: 4 }}>Microcontabilidad</Title>
+                                                <Text type="secondary" style={{ fontSize: 16 }}>Dashboard corporativo de flujo de caja y rentabilidad.</Text>
+                                            </div>
+                                            <Space>
+                                                <Button type="primary" icon={PlusOutlined && <PlusOutlined />}>
+                                                    Registrar Movimiento
+                                                </Button>
+                                            </Space>
+                                        </div>
+                                        <Card className="premium-card">
+                                            <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8c8c' }}>
+                                                <WalletOutlined style={{ fontSize: 48, color: '#d9d9d9', marginBottom: 16 }} />
+                                                <Title level={4} style={{ color: '#8c8c8c' }}>Módulo de Microcontabilidad en Construcción</Title>
+                                                <Text>Aquí podrás visualizar el desglose de ingresos, egresos y el análisis de tu capital de trabajo.</Text>
+                                            </div>
                                         </Card>
                                     </div>
 
