@@ -325,6 +325,8 @@
                 const [isExpenseModalVisible, setIsExpenseModalVisible] = React.useState(false);
                 const [isIncomeModalVisible, setIsIncomeModalVisible] = React.useState(false);
                 const [isLucidModalVisible, setIsLucidModalVisible] = React.useState(false);
+                const [isCfdCargaVisible, setIsCfdCargaVisible] = React.useState(false);
+                const [isCfdImportVisible, setIsCfdImportVisible] = React.useState(false);
 
                 const [editingAccount, setEditingAccount] = React.useState(null);
                 const [form] = Form.useForm();
@@ -332,6 +334,8 @@
                 const [expenseForm] = Form.useForm();
                 const [incomeForm] = Form.useForm();
                 const [lucidForm] = Form.useForm();
+                const [cfdCargaForm] = Form.useForm();
+                const [cfdImportForm] = Form.useForm();
                 const fileInputRef = React.useRef(null);
 
                 // Watch currency to show/hide exchange rate
@@ -581,6 +585,156 @@
                             message.success('Avance registrado correctamente en Supabase');
                         } else {
                             message.error('Error al registrar el avance: ' + error.message);
+                        }
+                    });
+                };
+
+                window.parseMTReport = (htmlString, accountId) => {
+                    try {
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(htmlString, "text/html");
+                        
+                        let balance = 0;
+                        let floatingPnl = 0;
+                        let equity = 0;
+
+                        const tds = Array.from(doc.querySelectorAll('td, th, div, span, b'));
+                        
+                        const getNextValue = (searchText) => {
+                            const element = tds.find(t => t.textContent && t.textContent.trim() === searchText);
+                            if (element) {
+                                let curr = element.nextElementSibling || element.parentElement.nextElementSibling;
+                                // In MT4 HTML, sometimes it's <td align="right"><b>Balance:</b></td> <td align="right"><b>1000.00</b></td>
+                                if(curr) {
+                                    const rawVal = curr.textContent.trim().replace(/ /g, '').replace(/,/g, '');
+                                    const parsed = parseFloat(rawVal);
+                                    if(!isNaN(parsed)) return parsed;
+                                }
+                                
+                                // Alternatively look into the DOM generic string, wait, let's keep it simple with nextElementSibling 
+                                // that goes down the tree but if not found, we look at the whole text
+                            }
+                            // Fallback regex over whole HTML if DOM structured differently
+                            const regex = new RegExp(searchText + "\\s*<[^>]+>\\s*<[^>]+>\\s*([-0-9., ]+)");
+                            const match = htmlString.match(regex);
+                            if(match && match[1]) {
+                                return parseFloat(match[1].replace(/ /g, '').replace(/,/g, ''));
+                            }
+
+                            // Second fallback simple text search
+                            const pureTextRegex = new RegExp(searchText + "\\s*([-0-9., ]+)", "i");
+                            const textDocContent = doc.body.textContent;
+                            const textMatch = textDocContent.match(pureTextRegex);
+                            if(textMatch && textMatch[1]) {
+                                return parseFloat(textMatch[1].replace(/ /g, '').replace(/,/g, ''));
+                            }
+                            return null;
+                        };
+
+                        const extractedBalance = getNextValue('Balance:');
+                        if (extractedBalance !== null) balance = extractedBalance;
+
+                        const extractedFloating = getNextValue('Floating P/L:');
+                        if (extractedFloating !== null) floatingPnl = extractedFloating;
+
+                        const extractedEquity = getNextValue('Equity:');
+                        if (extractedEquity !== null) equity = extractedEquity;
+
+                        // Extraer tablas de transacciones 
+                        const extractTableData = (headerText) => {
+                            const results = [];
+                            const trs = Array.from(doc.querySelectorAll('tr'));
+                            const headerTrIndex = trs.findIndex(tr => tr.textContent.includes(headerText));
+                            
+                            if(headerTrIndex !== -1) {
+                                const colHeadersTr = trs[headerTrIndex + 1];
+                                if(!colHeadersTr) return results;
+                                
+                                const headCells = Array.from(colHeadersTr.querySelectorAll('td, th')).map(c => c.textContent.trim().toLowerCase());
+                                
+                                for(let i = headerTrIndex + 2; i < trs.length; i++) {
+                                    const tr = trs[i];
+                                    const text = tr.textContent.trim();
+                                    
+                                    if(!text || text.includes('Closed P/L:') || text.includes('Floating P/L:') || text.includes('Summary:') || text.includes('Open Trades:') || text.includes('Working Orders:')) {
+                                        break;
+                                    }
+                                    
+                                    const cells = Array.from(tr.querySelectorAll('td'));
+                                    if(cells.length >= 8) { 
+                                        const trade = {};
+                                        cells.forEach((cell, idx) => {
+                                            const header = headCells[idx] || `col${idx}`;
+                                            trade[header] = cell.textContent.trim();
+                                        });
+                                        results.push(trade);
+                                    }
+                                }
+                            }
+                            return results;
+                        };
+
+                        const closedTrades = extractTableData('Closed Transactions:');
+                        const openTrades = extractTableData('Open Trades:');
+
+                        console.log("Datos extraidos HTML:", { balance, floatingPnl, equity });
+                        console.log("Transacciones Cerradas:", closedTrades);
+                        console.log("Transacciones Abiertas:", openTrades);
+
+                        if (balance === 0 && equity === 0) {
+                             message.warning("Atención: El parser no pudo encontrar el Balance y Equity automáticamente. Intenta llenar manualmente.", 5);
+                             setIsCfdImportVisible(false);
+                             cfdCargaForm.setFieldsValue({ cfdAccountId: accountId });
+                             setIsCfdCargaVisible(true);
+                        } else {
+                             if (equity === 0) equity = balance + floatingPnl;
+                             
+                             cfdCargaForm.setFieldsValue({
+                                 cfdAccountId: accountId,
+                                 balanceCerrado: balance,
+                                 equityActual: equity
+                             });
+                             setIsCfdImportVisible(false);
+                             setIsCfdCargaVisible(true);
+                             message.success(`¡Reporte leído con éxito! Balance: $${balance} | Equity: $${equity}`);
+                        }
+                    } catch(err) {
+                        message.error('Error al analizar el reporte MT4/MT5: ' + err.message);
+                        console.error("- Parse error:", err);
+                    }
+                };
+
+                const handleCfdCargaOk = () => {
+                    cfdCargaForm.validateFields().then(async (values) => {
+                        const acc = propTradingData.find(a => a.id === values.cfdAccountId);
+                        if (!acc) return message.error("Cuenta no encontrada");
+
+                        const balanceCerrado = Number(values.balanceCerrado);
+                        const equityActual = Number(values.equityActual);
+                        const pnlDiario = Number((balanceCerrado - acc.balance).toFixed(2));
+
+                        const dailyLossLimit = acc.daily_loss_limit; 
+                        const alertThreshold = dailyLossLimit + (acc.balance * 0.01);
+                        
+                        if (equityActual <= alertThreshold) {
+                            message.error({ content: 'Riesgo Crítico: Violación de DD Diario inminente (1% o menos).', duration: 10, style: { fontWeight: 'bold' } });
+                        }
+
+                        const updatePayload = {
+                            pnl_diario: pnlDiario,
+                            current_equity: equityActual
+                        };
+
+                        const { error } = await supabase.from('cfd_accounts').update(updatePayload).eq('id', acc.id);
+
+                        if (!error) {
+                            const updatedAccounts = propTradingData.map(a => a.id === acc.id ? { ...a, pnl_diario: pnlDiario, current_equity: equityActual } : a);
+                            setPropTradingData(updatedAccounts);
+                            setIsCfdCargaVisible(false);
+                            cfdCargaForm.resetFields();
+                            message.success(`Balance actualizado exitosamente. PnL Registrado: $${pnlDiario}`);
+                        } else {
+                            message.error('Error al actualizar: ' + error.message);
                         }
                     });
                 };
@@ -1048,9 +1202,13 @@
                                                 <Title level={2} style={{ marginBottom: 4 }}>Módulo de Prop Trading CFD</Title>
                                                 <Text type="secondary" style={{ fontSize: 16 }}>Monitoreo de evaluaciones y cuentas reales.</Text>
                                             </div>
-                                            <Button type="primary" icon={PlusOutlined && <PlusOutlined />} onClick={() => setIsPropModalVisible(true)}>
-                                                Nueva Cuenta Prop
-                                            </Button>
+                                            <Space>
+                                                <Button onClick={() => setIsCfdImportVisible(true)} icon={<span role="img" aria-label="document">📄</span>}>Importar Reporte</Button>
+                                                <Button onClick={() => setIsCfdCargaVisible(true)} icon={<span role="img" aria-label="lightning">⚡</span>}>Carga Rápida</Button>
+                                                <Button type="primary" icon={PlusOutlined && <PlusOutlined />} onClick={() => setIsPropModalVisible(true)}>
+                                                    Nueva Cuenta Prop
+                                                </Button>
+                                            </Space>
                                         </div>
 
                                         {[
@@ -1454,6 +1612,53 @@
                                         </Form.Item>
                                     </Col>
                                 </Row>
+                            </Form>
+                        </Modal>
+
+                        {/* Modales Nuevos CFD */}
+                        <Modal title="Carga Rápida CFD" open={isCfdCargaVisible} onCancel={() => { setIsCfdCargaVisible(false); cfdCargaForm.resetFields(); }} onOk={handleCfdCargaOk} okText="Actualizar" cancelText="Cancelar">
+                            <Form form={cfdCargaForm} layout="vertical">
+                                <Form.Item name="cfdAccountId" label="Selecciona la Cuenta CFD" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <Select placeholder="Selecciona la cuenta">
+                                        {propTradingData.map(acc => <Select.Option key={acc.id} value={acc.id}>{acc.name} ({acc.firm}) - Bal: ${acc.balance}</Select.Option>)}
+                                    </Select>
+                                </Form.Item>
+                                <Form.Item name="balanceCerrado" label="Balance Cerrado Hoy ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <InputNumber style={{ width: '100%' }} placeholder="Ej. 51200" />
+                                </Form.Item>
+                                <Form.Item name="equityActual" label="Equity Actual (con Flotante) ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <InputNumber style={{ width: '100%' }} placeholder="Ej. 50900" />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
+
+                        <Modal title="Importar Reporte MT4/MT5" open={isCfdImportVisible} onCancel={() => { setIsCfdImportVisible(false); cfdImportForm.resetFields(); }} onOk={() => console.log('Import modal form submit pending logic')} okText="Analizar HTML" cancelText="Cerrar">
+                             <Form form={cfdImportForm} layout="vertical">
+                                <Form.Item name="cfdAccountIdImport" label="Cuenta de Destino" rules={[{ required: true, message: 'Selecciona la cuenta destino para amarrar este reporte' }]}>
+                                    <Select placeholder="Selecciona la cuenta">
+                                        {propTradingData.map(acc => <Select.Option key={acc.id} value={acc.id}>{acc.name} ({acc.firm})</Select.Option>)}
+                                    </Select>
+                                </Form.Item>
+                                <div style={{ border: '2px dashed #1677ff', padding: '30px', textAlign: 'center', borderRadius: '8px', cursor: 'pointer', backgroundColor: '#e6f4ff' }} onClick={() => document.getElementById('mtReportUpload').click()}>
+                                    <strong>Haz clic aquí para seleccionar tu repote HTML detallado</strong>
+                                    <br />
+                                    <span style={{color: 'gray', fontSize: '13px'}}>Solo archivos provenientes de MT4 o MT5 (.htm / .html)</span>
+                                    <input type="file" id="mtReportUpload" style={{ display: 'none' }} accept=".html, .htm" onChange={(e) => {
+                                        const file = e.target.files[0];
+                                        if (file) {
+                                            const accountId = cfdImportForm.getFieldValue('cfdAccountIdImport');
+                                            if (!accountId) {
+                                                message.warning('Debes seleccionar la cuenta destino antes de adjuntar el archivo.');
+                                                e.target.value = null;
+                                                return;
+                                            }
+                                            const reader = new FileReader();
+                                            reader.onload = (evt) => window.parseMTReport(evt.target.result, accountId);
+                                            reader.readAsText(file);
+                                            e.target.value = null;
+                                        }
+                                    }} />
+                                </div>
                             </Form>
                         </Modal>
 
