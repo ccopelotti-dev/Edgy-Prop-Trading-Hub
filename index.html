@@ -589,7 +589,7 @@
                     });
                 };
 
-                window.parseMTReport = (htmlString, accountId) => {
+                window.parseMTReport = async (htmlString, accountId) => {
                     try {
                         const parser = new DOMParser();
                         const doc = parser.parseFromString(htmlString, "text/html");
@@ -681,22 +681,104 @@
                         console.log("Transacciones Cerradas:", closedTrades);
                         console.log("Transacciones Abiertas:", openTrades);
 
-                        if (balance === 0 && equity === 0) {
-                             message.warning("Atención: El parser no pudo encontrar el Balance y Equity automáticamente. Intenta llenar manualmente.", 5);
-                             setIsCfdImportVisible(false);
-                             cfdCargaForm.setFieldsValue({ cfdAccountId: accountId });
-                             setIsCfdCargaVisible(true);
+                        const acc = propTradingData.find(a => a.id === accountId);
+                        if (!acc) return message.error("Cuenta destino no encontrada en el dashboard.");
+                        const firmName = acc.firm;
+
+                        // Construir el payload de base de datos extraído de la tabla HTML
+                        const newTrades = [];
+                        closedTrades.forEach(t => {
+                            const findKey = (str) => Object.keys(t).find(k => k.includes(str));
+                            const ticketKey = findKey('ticket');
+                            const openTimeKey = findKey('open time') || findKey('time');
+                            const closeTimeKey = findKey('close time');
+                            const itemKey = findKey('item') || findKey('symbol');
+                            const typeKey = findKey('type');
+                            const profitKey = findKey('profit');
+                            
+                            if (ticketKey && itemKey && t[ticketKey]) {
+                                let parsedProfit = 0;
+                                if (profitKey && t[profitKey]) {
+                                    parsedProfit = parseFloat(t[profitKey].replace(/ /g, '').replace(/,/g, '')) || 0;
+                                }
+                                
+                                const fmtDate = (raw) => {
+                                    if (!raw) return null;
+                                    const cleaned = raw.trim().replace(/\./g, '-');
+                                    if (cleaned.length < 5) return null;
+                                    return cleaned;
+                                };
+
+                                newTrades.push({
+                                    user_id: currentUser.id,
+                                    account_id: accountId,
+                                    ticket: t[ticketKey],
+                                    symbol: t[itemKey],
+                                    type: typeKey ? t[typeKey] : '',
+                                    open_time: openTimeKey ? fmtDate(t[openTimeKey]) : null,
+                                    close_time: closeTimeKey ? fmtDate(t[closeTimeKey]) : null,
+                                    profit: parsedProfit,
+                                    firm_name: firmName
+                                });
+                            }
+                        });
+
+                        message.loading({ content: 'Sincronizando con Supabase, verificando duplicados...', key: 'importing', duration: 0 });
+
+                        // Obtener tickets existentes para no duplicar historiales
+                        const { data: existing, error: fetchErr } = await supabase
+                            .from('trade_history')
+                            .select('ticket')
+                            .eq('account_id', accountId);
+
+                        if (fetchErr && fetchErr.code !== '42P01') throw fetchErr; // Ignorar si la tabla no existe momentaneamente para capturarlo en el insert
+
+                        const existingSet = new Set((existing || []).map(e => String(e.ticket).trim()));
+                        const uniqueNewTrades = newTrades.filter(t => !existingSet.has(String(t.ticket).trim()));
+
+                        if (uniqueNewTrades.length > 0) {
+                            message.loading({ content: `Insertando ${uniqueNewTrades.length} trades históricos nuevos...`, key: 'importing', duration: 0 });
+                            const { error: insErr } = await supabase.from('trade_history').insert(uniqueNewTrades);
+                            if (insErr) {
+                                if (insErr.code === '42P01') {
+                                    message.error({ content: 'Error crítico: La tabla "trade_history" no existe en tu base de datos Supabase. Debes crearla primero.', key: 'importing', duration: 10 });
+                                    return;
+                                }
+                                throw insErr;
+                            }
+                        }
+
+                        // Calcular limites para lanzar la alerta
+                        let riesgoDetectado = false;
+                        const finalEquity = equity === 0 ? balance + floatingPnl : equity;
+                        if (balance > 0 || finalEquity > 0) {
+                            const dailyLossLimit = acc.daily_loss_limit; 
+                            const alertThreshold = dailyLossLimit + (acc.balance * 0.01);
+                            
+                            if (finalEquity > 0 && finalEquity <= alertThreshold) {
+                                riesgoDetectado = true;
+                                message.error({ content: 'Riesgo Crítico: Violación de DD Diario inminente (Equidad muy cerca del límite de 1%).', duration: 15, style: { fontWeight: 'bold', fontSize: '16px' } });
+                            }
+                            
+                            const pnlDiario = Number((balance - acc.balance).toFixed(2));
+                            
+                            // Emitir a CFD Accounts
+                            const { error: updateErr } = await supabase.from('cfd_accounts').update({
+                                balance: balance,
+                                pnl_diario: pnlDiario,
+                                current_equity: finalEquity
+                            }).eq('id', accountId);
+                            
+                            if (updateErr) throw updateErr;
+
+                            const updatedAccounts = propTradingData.map(a => a.id === acc.id ? { ...a, balance, pnl_diario: pnlDiario, current_equity: finalEquity } : a);
+                            setPropTradingData(updatedAccounts);
+                            
+                            setIsCfdImportVisible(false);
+                            message.success({ content: `Importación exitosa: Se han registrado ${uniqueNewTrades.length} nuevos trades y se ha actualizado el balance de la cuenta ${acc.name}.`, key: 'importing', duration: 8 });
                         } else {
-                             if (equity === 0) equity = balance + floatingPnl;
-                             
-                             cfdCargaForm.setFieldsValue({
-                                 cfdAccountId: accountId,
-                                 balanceCerrado: balance,
-                                 equityActual: equity
-                             });
-                             setIsCfdImportVisible(false);
-                             setIsCfdCargaVisible(true);
-                             message.success(`¡Reporte leído con éxito! Balance: $${balance} | Equity: $${equity}`);
+                            message.warning({ content: `Se agregaron ${uniqueNewTrades.length} trades, pero el Reporte HTML no contenía estadísticas de Summary globales para actualizar la cuenta.`, key: 'importing', duration: 7 });
+                            setIsCfdImportVisible(false);
                         }
                     } catch(err) {
                         message.error('Error al analizar el reporte MT4/MT5: ' + err.message);
