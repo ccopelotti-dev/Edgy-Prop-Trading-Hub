@@ -197,32 +197,35 @@
                 };
 
                 const handlePropSubmit = async (values) => {
-                    const balance = values.balance || 0;
+                    const balance = Number(values.balance) || 0;
                     
                     // Limpieza y parseo a número de los porcentajes
                     const rawDaily = values.dailyDrawdownPercent ? String(values.dailyDrawdownPercent).replace('%', '') : '0';
-                    const dailyPercent = parseFloat(rawDaily);
+                    const dailyPercent = Number(parseFloat(rawDaily));
 
                     const rawTotal = values.totalDrawdownPercent ? String(values.totalDrawdownPercent).replace('%', '') : '0';
-                    const totalPercent = parseFloat(rawTotal);
+                    const totalPercent = Number(parseFloat(rawTotal));
                     
-                    const dailyLossPrice = balance - (balance * dailyPercent / 100);
-                    const totalThreshold = balance - (balance * totalPercent / 100);
+                    const dailyLossPrice = Number((balance - (balance * dailyPercent / 100)).toFixed(2));
+                    const totalThreshold = Number((balance - (balance * totalPercent / 100)).toFixed(2));
 
                     const newAcc = { 
+                        user_id: currentUser ? currentUser.id : null, 
                         firm: values.firm,
                         name: values.name,
                         type: values.type,
                         balance: balance,
-                        pnlDiario: values.pnlDiario || 0,
-                        goal: values.goal || null,
-                        id: Date.now().toString(),
+                        pnlDiario: Number(values.pnlDiario) || 0,
+                        goal: values.goal ? Number(values.goal) : null,
                         daily_drawdown_pct: dailyPercent,
                         total_drawdown_pct: totalPercent,
                         drawdown_type: values.drawdownType || 'Fijo',
                         daily_loss_limit: dailyLossPrice,
                         total_loss_limit: totalThreshold
                     };
+
+                    console.log('DATOS A ENVIAR A SUPABASE (CFD):', newAcc);
+
                     const { data, error } = await supabase.from('cfd_accounts').insert([newAcc]).select();
                     if (!error && data) {
                         setPropTradingData([...propTradingData, data[0]]);
@@ -230,6 +233,7 @@
                         propForm.resetFields();
                         message.success('Cuenta Prop agregada con éxito en Supabase.');
                     } else {
+                        console.error('Error insertando CFD:', error);
                         message.error('Error al agregar cuenta Prop.');
                     }
                 };
