@@ -223,7 +223,8 @@
                         total_drawdown_pct: totalPercent,
                         drawdown_type: values.drawdownType || 'Fijo',
                         daily_loss_limit: dailyLossPrice,
-                        total_loss_limit: totalThreshold
+                        total_loss_limit: totalThreshold,
+                        acquisition_cost: Number(values.acquisitionCost) || 0
                     };
 
                     console.log('DATOS A ENVIAR A SUPABASE (CFD):', newAcc);
@@ -449,7 +450,8 @@
                             threshold: cleanBalance - parseFloat(values.maxDrawdown),
                             creation_date: formattedCreationDate,
                             expiration_date: formattedExpirationDate,
-                            user_id: currentUser?.username === 'Carlos' || currentUser?.id ? String(currentUser.id || 'Carlos') : null
+                            user_id: currentUser?.username === 'Carlos' || currentUser?.id ? String(currentUser.id || 'Carlos') : null,
+                            acquisition_cost: Number(values.acquisitionCost) || 0
                         };
 
                         console.log("PAYLOAD ENVIADO A SUPABASE:", JSON.stringify(newAccount, null, 2));
