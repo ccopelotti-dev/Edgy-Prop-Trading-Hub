@@ -213,10 +213,10 @@
                         user_id: currentUser ? currentUser.id : null, 
                         firm: values.firm,
                         name: values.name,
-                        account_type: values.type,
+                        type: values.type,
                         balance: balance,
                         pnlDiario: Number(values.pnlDiario) || 0,
-                        goal: values.goal ? Number(values.goal) : null,
+                        goal: Number(values.goal) || 0,
                         daily_drawdown_pct: dailyPercent,
                         total_drawdown_pct: totalPercent,
                         drawdown_type: values.drawdownType || 'Fijo',
@@ -1058,7 +1058,7 @@
                                             { title: 'Evaluación Fase 2', type: 'Evaluación Fase 2', color: '#722ed1' },
                                             { title: 'Real', type: 'Real', color: '#52c41a' }
                                         ].map(section => {
-                                            const sectionData = propTradingData.filter(item => item.account_type === section.type);
+                                            const sectionData = propTradingData.filter(item => item.type === section.type);
                                             if (sectionData.length === 0) return null;
                                             return (
                                                 <Card key={section.type} title={<span style={{ fontSize: 18, color: section.color }}>{section.title}</span>} className="premium-card" style={{ marginBottom: 24 }}>
