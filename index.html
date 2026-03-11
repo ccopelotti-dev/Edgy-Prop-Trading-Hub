@@ -680,7 +680,6 @@
                                 };
 
                                 newTrades.push({
-                                    user_id: currentUser.id,
                                     account_id: accountId,
                                     ticket: t[ticketKey],
                                     symbol: t[itemKey],
@@ -753,6 +752,8 @@
                     } catch(err) {
                         message.error('Error al analizar el reporte MT4/MT5: ' + err.message);
                         console.error("- Parse error:", err);
+                    } finally {
+                        message.destroy('importing');
                     }
                 };
 
