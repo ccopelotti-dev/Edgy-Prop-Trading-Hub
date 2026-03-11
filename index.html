@@ -556,6 +556,14 @@
 
                 window.parseMTReport = async (htmlString, accountId) => {
                     try {
+                        const { data: authData, error: authErr } = await supabase.auth.getUser();
+                        if (authErr || !authData?.user) {
+                            console.error("Auth Session Error:", authErr);
+                            message.error("Sesión expirada o inválida. Por favor inicia sesión nuevamente.");
+                            return;
+                        }
+                        const sessionUser = authData.user;
+
                         const parser = new DOMParser();
                         const doc = parser.parseFromString(htmlString, "text/html");
                         
@@ -675,7 +683,7 @@
                                 };
 
                                 newTrades.push({
-                                    user_id: currentUser.id,
+                                    user_id: sessionUser.id,
                                     account_id: accountId,
                                     ticket: t[ticketKey],
                                     symbol: t[itemKey],
