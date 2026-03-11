@@ -157,8 +157,7 @@
                     if (!currentUser) return;
                     let query = supabase.from('accounting')
                         .select('*')
-                        .eq('user_id', currentUser.id)
-                        .order('transaction_date', { ascending: false });
+                        .order('date', { ascending: false });
                     const { data, error } = await query;
                     if (!error && data) setTransactions(data);
                 };
@@ -473,12 +472,11 @@
                 const handleMicroSubmit = () => {
                     microForm.validateFields().then(async (values) => {
                         const newTx = {
-                            user_id: currentUser.id,
                             type: values.type,
                             amount: Number(values.amount) || 0,
                             category: values.category || 'General',
                             description: values.description || '',
-                            transaction_date: values.transaction_date ? values.transaction_date.toISOString() : new Date().toISOString()
+                            date: values.transaction_date ? values.transaction_date.toISOString() : new Date().toISOString()
                         };
 
                         const { data, error } = await supabase.from('accounting').insert([newTx]).select();
@@ -556,13 +554,12 @@
 
                 window.parseMTReport = async (htmlString, accountId) => {
                     try {
-                        const { data: authData, error: authErr } = await supabase.auth.getUser();
-                        if (authErr || !authData?.user) {
-                            console.error("Auth Session Error:", authErr);
+                        if (!currentUser || !currentUser.id) {
+                            console.error("Auth Session Error: currentUser is null");
                             message.error("Sesión expirada o inválida. Por favor inicia sesión nuevamente.");
+                            setIsAuthenticated(false);
                             return;
                         }
-                        const sessionUser = authData.user;
 
                         const parser = new DOMParser();
                         const doc = parser.parseFromString(htmlString, "text/html");
@@ -683,7 +680,7 @@
                                 };
 
                                 newTrades.push({
-                                    user_id: sessionUser.id,
+                                    user_id: currentUser.id,
                                     account_id: accountId,
                                     ticket: t[ticketKey],
                                     symbol: t[itemKey],
@@ -1415,13 +1412,13 @@
                                         <Card title={<span style={{ fontSize: 18, color: PRIMARY_COLOR }}>Historial de Movimientos</span>} className="premium-card">
                                             <Table
                                                 dataSource={transactions}
-                                                rowKey={(record) => record.id || record.transaction_date}
+                                                rowKey={(record) => record.id || record.date}
                                                 pagination={{ pageSize: 10 }}
                                                 columns={[
                                                     { 
                                                         title: 'Fecha', 
-                                                        dataIndex: 'transaction_date', 
-                                                        key: 'transaction_date', 
+                                                        dataIndex: 'date', 
+                                                        key: 'date', 
                                                         render: text => text ? new Date(text).toLocaleDateString() : '-' 
                                                     },
                                                     { 
