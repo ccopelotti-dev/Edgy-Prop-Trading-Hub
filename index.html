@@ -343,10 +343,13 @@
                 const [isLucidModalVisible, setIsLucidModalVisible] = React.useState(false);
                 const [isCfdCargaVisible, setIsCfdCargaVisible] = React.useState(false);
                 const [isCfdImportVisible, setIsCfdImportVisible] = React.useState(false);
+                const [isPayoutModalVisible, setIsPayoutModalVisible] = React.useState(false);
 
                 const [editingAccount, setEditingAccount] = React.useState(null);
+                const [payoutAccount, setPayoutAccount] = React.useState(null);
                 const [form] = Form.useForm();
                 const [newForm] = Form.useForm();
+                const [payoutForm] = Form.useForm();
                 const [microForm] = Form.useForm();
                 const [lucidForm] = Form.useForm();
                 const [cfdCargaForm] = Form.useForm();
@@ -519,6 +522,53 @@
                             console.error('Error al insertar movimiento:', error);
                             message.error('Error al registrar el movimiento.');
                         }
+                    });
+                };
+
+                const handlePayoutClick = (record) => {
+                    setPayoutAccount(record);
+                    setIsPayoutModalVisible(true);
+                };
+
+                const handlePayoutSubmit = () => {
+                    payoutForm.validateFields().then(async (values) => {
+                        const amount = Number(values.amount);
+                        
+                        // 1. Registrar Ingreso
+                        const newTx = {
+                            type: 'Ingreso',
+                            amount: amount,
+                            category: 'Payout / Retiro Trading',
+                            description: `Retiro de cuenta: ${payoutAccount.name}`,
+                            date: new Date().toISOString()
+                        };
+                        const { error: txError } = await supabase.from('accounting').insert([newTx]);
+                        if (txError) {
+                            message.error('Error registrando ingreso en Microcontabilidad.');
+                            return;
+                        }
+
+                        // 2. Ajustar P&L
+                        if (payoutAccount.pnl !== undefined) { // Futures
+                            const newPnl = payoutAccount.pnl - amount;
+                            const { error: accError } = await supabase.from('prop_accounts').update({ pnl: newPnl }).eq('id', payoutAccount.id);
+                            if (!accError) {
+                                setAccounts(accounts.map(a => a.id === payoutAccount.id ? { ...a, pnl: newPnl } : a));
+                            }
+                        } else if (payoutAccount.pnl_diario !== undefined) { // CFD
+                            const newPnl = payoutAccount.pnl_diario - amount;
+                            const equityActual = payoutAccount.balance + newPnl;
+                            const { error: accError } = await supabase.from('cfd_accounts').update({ pnl_diario: newPnl, current_equity: equityActual }).eq('id', payoutAccount.id);
+                            if (!accError) {
+                                setPropTradingData(propTradingData.map(a => a.id === payoutAccount.id ? { ...a, pnl_diario: newPnl, current_equity: equityActual } : a));
+                            }
+                        }
+
+                        fetchTransactions();
+                        setIsPayoutModalVisible(false);
+                        payoutForm.resetFields();
+                        setPayoutAccount(null);
+                        message.success(`Payout de $${amount} registrado exitosamente.`);
                     });
                 };
 
@@ -983,9 +1033,16 @@
                         title: 'Acciones',
                         key: 'actions',
                         render: (_, record) => (
-                            <Button type="primary" size="small" ghost icon={EditOutlined && <EditOutlined />} onClick={() => handleEdit(record)}>
-                                Editar
-                            </Button>
+                            <Space size="small">
+                                <Button type="primary" size="small" ghost icon={EditOutlined && <EditOutlined />} onClick={() => handleEdit(record)}>
+                                    Editar
+                                </Button>
+                                {['Master', 'Live', 'Master / Fondeada', 'Live / Real', 'Real'].includes(record.type) && (
+                                    <Button type="primary" size="small" style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }} icon={<span role="img" aria-label="money">💵</span>} onClick={() => handlePayoutClick(record)}>
+                                        Payout
+                                    </Button>
+                                )}
+                            </Space>
                         )
                     }
                 ];
@@ -1190,21 +1247,6 @@
 
                                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 24, gap: '8px', flexWrap: 'wrap' }}>
                                             <Space wrap>
-                                                <Button
-                                                    danger
-                                                    icon={FallOutlined && <FallOutlined />}
-                                                    onClick={() => setIsExpenseModalVisible(true)}
-                                                >
-                                                    Registrar Gasto
-                                                </Button>
-                                                <Button
-                                                    style={{ color: '#52c41a', borderColor: '#52c41a' }}
-                                                    icon={DollarOutlined && <DollarOutlined />}
-                                                    onClick={() => setIsIncomeModalVisible(true)}
-                                                >
-                                                    Registrar Cobro
-                                                </Button>
-
                                                 <span style={{ borderLeft: '1px solid #d9d9d9', height: '32px', margin: '0 8px' }}></span>
 
                                                 <input
@@ -1348,7 +1390,16 @@
                                                                     );
                                                                 }
                                                             },
-                                                            { title: 'Acción', key: 'action', render: (_, record) => <Button type="text" danger icon={DeleteOutlined && <DeleteOutlined />} onClick={() => handleDeleteProp(record.id)} /> }
+                                                            { title: 'Acción', key: 'action', render: (_, record) => (
+                                                                <Space size="small">
+                                                                    {['Master', 'Live', 'Master / Fondeada', 'Live / Real', 'Real'].includes(record.type) && (
+                                                                        <Button type="primary" size="small" style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }} icon={<span role="img" aria-label="money">💵</span>} onClick={() => handlePayoutClick(record)}>
+                                                                            Payout
+                                                                        </Button>
+                                                                    )}
+                                                                    <Button type="text" danger icon={DeleteOutlined && <DeleteOutlined />} onClick={() => handleDeleteProp(record.id)} />
+                                                                </Space>
+                                                            ) }
                                                         ]}
                                                     />
                                                 </Card>
@@ -1486,6 +1537,23 @@
                                 </Content>
                             </Layout>
                         </Layout>
+
+                        {/* Modal para Registrar Payout */}
+                        <Modal
+                            title={`Registrar Payout - ${payoutAccount?.name}`}
+                            open={isPayoutModalVisible}
+                            onCancel={() => { setIsPayoutModalVisible(false); payoutForm.resetFields(); setPayoutAccount(null); }}
+                            onOk={handlePayoutSubmit}
+                            okText="Registrar Payout"
+                            cancelText="Cancelar"
+                            width={400}
+                        >
+                            <Form form={payoutForm} layout="vertical">
+                                <Form.Item name="amount" label="Monto del Payout ($)" rules={[{ required: true, message: 'Requerido' }]}>
+                                    <InputNumber style={{ width: '100%' }} min={1} formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} parser={value => value.replace(/\$\s?|(,*)/g, '')} placeholder="Ej. 1000" />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
 
                         {/* Modal para Editar */}
                         <Modal
