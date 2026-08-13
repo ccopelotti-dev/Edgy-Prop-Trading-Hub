@@ -18,12 +18,12 @@
  .metric-compare-neutral { color: #888; }
  </style>
 </head> <body> <div id="root"></div> <script type="text/babel"> try {
- const { Layout, Menu, Typography, Card, Row, Col, Table, Tag, Statistic, ConfigProvider, theme, Progress, Button, Modal, Form, Input, InputNumber, Space, message, Select, DatePicker, Tabs, Tooltip, Badge, Descriptions, Image, Calendar, Checkbox, Empty } = antd;
+ const { Layout, Menu, Typography, Card, Row, Col, Table, Tag, Statistic, ConfigProvider, theme, Progress, Button, Modal, Form, Input, InputNumber, Space, message, Select, DatePicker, TimePicker, Tabs, Tooltip, Badge, Descriptions, Image, Calendar, Checkbox, Empty, Timeline } = antd;
  const { Header, Content, Sider } = Layout;
  const { Title, Text } = Typography;
 
  const IconsObj = typeof icons !== 'undefined' ? icons : (window.icons || window.AntDesignIcons || {});
- const { DashboardOutlined, LineChartOutlined, WalletOutlined, BankOutlined, RiseOutlined, EditOutlined, UploadOutlined, PlusOutlined, UserOutlined, DeleteOutlined, FallOutlined, DollarOutlined, BarChartOutlined, CheckCircleOutlined, LockOutlined, LogoutOutlined, RobotOutlined, LinkOutlined, WarningOutlined, FileProtectOutlined, CalendarOutlined } = IconsObj;
+ const { DashboardOutlined, LineChartOutlined, WalletOutlined, BankOutlined, RiseOutlined, EditOutlined, UploadOutlined, PlusOutlined, UserOutlined, DeleteOutlined, FallOutlined, DollarOutlined, BarChartOutlined, CheckCircleOutlined, LockOutlined, LogoutOutlined, RobotOutlined, LinkOutlined, WarningOutlined, FileProtectOutlined, CalendarOutlined, MedicineBoxOutlined, FileTextOutlined, PaperClipOutlined, BellOutlined, HeartOutlined, SolutionOutlined } = IconsObj;
 
  const PRIMARY_COLOR = '#1e4fd8';
 
@@ -1735,6 +1735,200 @@
  fetchAgendaNotes(); fetchAgendaTasks();
  }catch(err){ message.error('Error al mover: ' + err.message); }
  };
+ // -- Personal / Salud: notificaciones push -----------------------
+ // Clave pública VAPID (la privada vive solo en el server / Edge
+ // Function). Hay que convertirla a Uint8Array porque así la pide
+ // pushManager.subscribe -- el formato que da Supabase/el generador
+ // es base64url.
+ const VAPID_PUBLIC_KEY = 'BEAvSc5X0mEQ_-z7ocpRww2MbYJv4FhyUctQL5qCqc7BCduE9uf5VlFA2zv-7bAWaLIFkebJuwq5Pl8P-Zz90PQ';
+ const urlBase64ToUint8Array = (base64String) =>{
+ const padding = '='.repeat((4 - base64String.length % 4) % 4);
+ const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+ const rawData = window.atob(base64);
+ const outputArray = new Uint8Array(rawData.length);
+ for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+ return outputArray;
+ };
+
+ const [saludActiveTab, setSaludActiveTab] = React.useState('consultas');
+ const [pushStatus, setPushStatus] = React.useState('unknown'); // unknown | subscribed | unsubscribed | unsupported
+ const [pushLoading, setPushLoading] = React.useState(false);
+
+ const refreshPushStatus = React.useCallback(async () =>{
+ if (!('serviceWorker' in navigator) || !('PushManager' in window)) { setPushStatus('unsupported'); return; }
+ try{
+ const reg = await navigator.serviceWorker.ready;
+ const sub = await reg.pushManager.getSubscription();
+ setPushStatus(sub ? 'subscribed' : 'unsubscribed');
+ }catch(e){ setPushStatus('unsupported'); }
+ }, []);
+
+ const activarNotificaciones = async () =>{
+ setPushLoading(true);
+ try{
+ if (!('serviceWorker' in navigator) || !('PushManager' in window)) { message.error('Este navegador no soporta notificaciones push.'); return; }
+ const permiso = await Notification.requestPermission();
+ if (permiso !== 'granted') { message.warning('No diste permiso de notificaciones.'); return; }
+ const reg = await navigator.serviceWorker.ready;
+ let sub = await reg.pushManager.getSubscription();
+ if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) });
+ const raw = sub.toJSON();
+ const { error } = await supabase.from('push_subscriptions').upsert({ endpoint: raw.endpoint, p256dh: raw.keys.p256dh, auth: raw.keys.auth, user_agent: navigator.userAgent }, { onConflict: 'endpoint' });
+ if (error) throw error;
+ setPushStatus('subscribed');
+ message.success('Notificaciones activadas en este dispositivo.');
+ }catch(err){ message.error('No se pudo activar: ' + err.message); }
+ finally{ setPushLoading(false); }
+ };
+
+ const desactivarNotificaciones = async () =>{
+ setPushLoading(true);
+ try{
+ const reg = await navigator.serviceWorker.ready;
+ const sub = await reg.pushManager.getSubscription();
+ if (sub) { await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); await sub.unsubscribe(); }
+ setPushStatus('unsubscribed');
+ message.success('Notificaciones desactivadas en este dispositivo.');
+ }catch(err){ message.error('No se pudo desactivar: ' + err.message); }
+ finally{ setPushLoading(false); }
+ };
+
+ // -- Salud: Consultas y diagnósticos -------------------------------
+ const [saludConsultas, setSaludConsultas] = React.useState([]);
+ const [isConsultaModalVisible, setIsConsultaModalVisible] = React.useState(false);
+ const [editingConsulta, setEditingConsulta] = React.useState(null);
+ const [consultaForm] = Form.useForm();
+
+ const fetchSaludConsultas = async () =>{
+ const { data, error } = await supabase.from('salud_consultas').select('*').order('fecha', { ascending: false });
+ if (!error && data) setSaludConsultas(data);
+ };
+ const openNewConsultaModal = () =>{ setEditingConsulta(null); consultaForm.resetFields(); consultaForm.setFieldsValue({ fecha: dayjs() }); setIsConsultaModalVisible(true); };
+ const openEditConsultaModal = (record) =>{ setEditingConsulta(record); consultaForm.setFieldsValue({ ...record, fecha: record.fecha ? dayjs(record.fecha) : null }); setIsConsultaModalVisible(true); };
+ const handleConsultaSubmit = async (values) =>{
+ const payload = { ...values, fecha: values.fecha ? values.fecha.format('YYYY-MM-DD') : null };
+ try{
+ if (editingConsulta) {
+ const { error } = await supabase.from('salud_consultas').update(payload).eq('id', editingConsulta.id);
+ if (error) throw error;
+ message.success('Consulta actualizada.');
+ } else {
+ const { error } = await supabase.from('salud_consultas').insert([payload]);
+ if (error) throw error;
+ message.success('Consulta cargada.');
+ }
+ setIsConsultaModalVisible(false); setEditingConsulta(null); consultaForm.resetFields();
+ fetchSaludConsultas();
+ }catch(err){ message.error('Error: ' + err.message); }
+ };
+ const handleDeleteConsulta = async (id) =>{
+ const { error } = await supabase.from('salud_consultas').delete().eq('id', id);
+ if (!error) { message.success('Consulta eliminada.'); fetchSaludConsultas(); }
+ };
+
+ // -- Salud: Medicación y dosis --------------------------------------
+ const [saludMedicacion, setSaludMedicacion] = React.useState([]);
+ const [isMedicacionModalVisible, setIsMedicacionModalVisible] = React.useState(false);
+ const [editingMedicacion, setEditingMedicacion] = React.useState(null);
+ const [medHorarios, setMedHorarios] = React.useState([]);
+ const [medicacionForm] = Form.useForm();
+
+ const fetchSaludMedicacion = async () =>{
+ const { data, error } = await supabase.from('salud_medicacion').select('*').order('activo', { ascending: false }).order('nombre');
+ if (!error && data) setSaludMedicacion(data);
+ };
+ const openNewMedicacionModal = () =>{ setEditingMedicacion(null); medicacionForm.resetFields(); medicacionForm.setFieldsValue({ fecha_inicio: dayjs(), activo: true }); setMedHorarios([]); setIsMedicacionModalVisible(true); };
+ const openEditMedicacionModal = (record) =>{
+ setEditingMedicacion(record);
+ medicacionForm.setFieldsValue({ ...record, fecha_inicio: record.fecha_inicio ? dayjs(record.fecha_inicio) : null, fecha_fin: record.fecha_fin ? dayjs(record.fecha_fin) : null });
+ setMedHorarios((record.horarios || []).map(h => dayjs(h, 'HH:mm:ss')));
+ setIsMedicacionModalVisible(true);
+ };
+ const handleMedicacionSubmit = async (values) =>{
+ const payload = {
+ ...values,
+ fecha_inicio: values.fecha_inicio ? values.fecha_inicio.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
+ fecha_fin: values.fecha_fin ? values.fecha_fin.format('YYYY-MM-DD') : null,
+ horarios: medHorarios.map(h => h.format('HH:mm')),
+ activo: values.activo !== false
+ };
+ try{
+ if (editingMedicacion) {
+ const { error } = await supabase.from('salud_medicacion').update(payload).eq('id', editingMedicacion.id);
+ if (error) throw error;
+ message.success('Medicación actualizada.');
+ } else {
+ const { error } = await supabase.from('salud_medicacion').insert([payload]);
+ if (error) throw error;
+ message.success('Medicación cargada.');
+ }
+ setIsMedicacionModalVisible(false); setEditingMedicacion(null); setMedHorarios([]); medicacionForm.resetFields();
+ fetchSaludMedicacion();
+ }catch(err){ message.error('Error: ' + err.message); }
+ };
+ const handleDeleteMedicacion = async (id) =>{
+ const { error } = await supabase.from('salud_medicacion').delete().eq('id', id);
+ if (!error) { message.success('Medicación eliminada.'); fetchSaludMedicacion(); }
+ };
+ const toggleMedicacionActivo = async (record) =>{
+ const { error } = await supabase.from('salud_medicacion').update({ activo: !record.activo }).eq('id', record.id);
+ if (!error) fetchSaludMedicacion();
+ };
+
+ // -- Salud: Turnos y estudios (con archivos) -------------------------
+ const [saludTurnos, setSaludTurnos] = React.useState([]);
+ const [isTurnoModalVisible, setIsTurnoModalVisible] = React.useState(false);
+ const [editingTurno, setEditingTurno] = React.useState(null);
+ const [turnoArchivos, setTurnoArchivos] = React.useState([]);
+ const [turnoForm] = Form.useForm();
+ const turnoFileRef = React.useRef(null);
+
+ const fetchSaludTurnos = async () =>{
+ const { data, error } = await supabase.from('salud_turnos_estudios').select('*').order('fecha', { ascending: true });
+ if (!error && data) setSaludTurnos(data);
+ };
+ const openNewTurnoModal = () =>{ setEditingTurno(null); turnoForm.resetFields(); turnoForm.setFieldsValue({ fecha: dayjs(), tipo: 'Turno', estado: 'Pendiente' }); setTurnoArchivos([]); setIsTurnoModalVisible(true); };
+ const openEditTurnoModal = (record) =>{
+ setEditingTurno(record);
+ turnoForm.setFieldsValue({ ...record, fecha: record.fecha ? dayjs(record.fecha) : null, hora: record.hora ? dayjs(record.hora, 'HH:mm:ss') : null });
+ setTurnoArchivos(record.archivos || []);
+ setIsTurnoModalVisible(true);
+ };
+ const handleTurnoSubmit = async (values) =>{
+ const payload = { ...values, fecha: values.fecha ? values.fecha.format('YYYY-MM-DD') : null, hora: values.hora ? values.hora.format('HH:mm') : null, archivos: turnoArchivos };
+ try{
+ if (editingTurno) {
+ const { error } = await supabase.from('salud_turnos_estudios').update(payload).eq('id', editingTurno.id);
+ if (error) throw error;
+ message.success('Turno/estudio actualizado.');
+ } else {
+ const { error } = await supabase.from('salud_turnos_estudios').insert([payload]);
+ if (error) throw error;
+ message.success('Turno/estudio cargado.');
+ }
+ setIsTurnoModalVisible(false); setEditingTurno(null); setTurnoArchivos([]); turnoForm.resetFields();
+ fetchSaludTurnos();
+ }catch(err){ message.error('Error: ' + err.message); }
+ };
+ const handleDeleteTurno = async (id) =>{
+ const { error } = await supabase.from('salud_turnos_estudios').delete().eq('id', id);
+ if (!error) { message.success('Eliminado.'); fetchSaludTurnos(); }
+ };
+ const handleToggleTurnoEstado = async (record) =>{
+ const nuevoEstado = record.estado === 'Realizado' ? 'Pendiente' : 'Realizado';
+ const { error } = await supabase.from('salud_turnos_estudios').update({ estado: nuevoEstado }).eq('id', record.id);
+ if (!error) fetchSaludTurnos();
+ };
+
+ // -- Salud: Historia Clínica -- timeline agregado de las 3 fuentes ---
+ const historiaClinicaItems = React.useMemo(() =>{
+ const items = [];
+ saludConsultas.forEach(c => items.push({ fecha: c.fecha, color: 'blue', titulo: `${c.especialidad || 'Consulta'}${c.medico ? ' - ' + c.medico : ''}`, detalle: c.diagnostico || c.motivo || '' }));
+ saludTurnos.filter(t => t.estado === 'Realizado').forEach(t => items.push({ fecha: t.fecha, color: 'purple', titulo: `${t.tipo}${t.lugar_o_medico ? ' - ' + t.lugar_o_medico : ''}`, detalle: t.motivo || '' }));
+ saludMedicacion.forEach(m => items.push({ fecha: m.fecha_inicio, color: 'green', titulo: `Inicio de medicación: ${m.nombre}${m.dosis ? ' (' + m.dosis + ')' : ''}`, detalle: m.indicacion || '' }));
+ return items.filter(i => i.fecha).sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+ }, [saludConsultas, saludTurnos, saludMedicacion]);
+
  const [transactions, setTransactions] = React.useState([]);
  const [activeMenu, setActiveMenu] = React.useState('dashboard');
 
@@ -2380,6 +2574,10 @@
  fetchStrategyMetrics();
  fetchStrategyBacktests();
  fetchAllRealTrades();
+ fetchSaludConsultas();
+ fetchSaludMedicacion();
+ fetchSaludTurnos();
+ refreshPushStatus();
  }
  }, [isAuthenticated, currentUser]);
 
@@ -3063,6 +3261,7 @@
  items={[
  { key: 'dashboard', icon: DashboardOutlined && <DashboardOutlined />, label: 'Dashboard' },
  { key: 'agenda', icon: CalendarOutlined && <CalendarOutlined />, label: 'Mi Agenda' },
+ { key: 'salud', icon: MedicineBoxOutlined && <MedicineBoxOutlined />, label: 'Personal / Salud' },
  { key: 'prop_trading_futures', icon: LineChartOutlined && <LineChartOutlined />, label: 'Prop Trading Futures' },
  { key: 'prop_trading_cfd', icon: DashboardOutlined && <DashboardOutlined />, label: 'Prop Trading CFD' },
  { key: '2', icon: LineChartOutlined && <LineChartOutlined />, label: 'Análisis de Trading' },
@@ -3158,6 +3357,61 @@
  ))}
  </Row>}
 </Card>
+</div>
+<div style={{ display: activeMenu === 'salud' ? 'block' : 'none' }}>
+ <div style={{ display:'flex', flexWrap:'wrap', rowGap:12, justifyContent:'space-between', alignItems:'center', marginBottom: 24 }}>
+ <div><Title level={2} style={{ marginBottom: 4 }}> Personal / Salud</Title><Text type="secondary" style={{ fontSize: 16 }}> Historia clínica, medicación y turnos, con recordatorios.</Text></div>
+ {pushStatus === 'subscribed'
+ ? <Button icon={BellOutlined && <BellOutlined />} loading={pushLoading} onClick={desactivarNotificaciones}>Notificaciones activadas (desactivar)</Button>
+ : <Button type="primary" icon={BellOutlined && <BellOutlined />} loading={pushLoading} disabled={pushStatus==='unsupported'} onClick={activarNotificaciones}>{pushStatus==='unsupported' ? 'Notificaciones no soportadas' : 'Activar notificaciones'}</Button>}
+ </div>
+ <Tabs activeKey={saludActiveTab} onChange={setSaludActiveTab} items={[
+ { key: 'consultas', label: 'Consultas y diagnósticos', children: (
+ <Card className="premium-card" extra={<Button type="primary" size="small" icon={PlusOutlined && <PlusOutlined />} onClick={openNewConsultaModal}>Nueva Consulta</Button>}>
+ {saludConsultas.length === 0 ? <Empty description="Sin consultas cargadas" /> : <Table rowKey="id" scroll={{ x:'max-content' }} dataSource={saludConsultas} pagination={{ pageSize: 8 }} columns={[
+ { title:'FECHA', dataIndex:'fecha', key:'fecha', render: v => v ? dayjs(v).format('DD/MM/YYYY') : '-' },
+ { title:'ESPECIALIDAD', dataIndex:'especialidad', key:'especialidad' },
+ { title:'MÉDICO', dataIndex:'medico', key:'medico' },
+ { title:'MOTIVO', dataIndex:'motivo', key:'motivo', ellipsis:true },
+ { title:'DIAGNÓSTICO', dataIndex:'diagnostico', key:'diagnostico', ellipsis:true },
+ { title:'', key:'acciones', render: (_, r) => <Space size={4}><Button size="small" type="link" onClick={() => openEditConsultaModal(r)}>Editar</Button><Button size="small" type="link" danger onClick={() => handleDeleteConsulta(r.id)}>Borrar</Button></Space> }
+ ]} />}
+ </Card>
+ )},
+ { key: 'medicacion', label: 'Medicación y dosis', children: (
+ <Card className="premium-card" extra={<Button type="primary" size="small" icon={PlusOutlined && <PlusOutlined />} onClick={openNewMedicacionModal}>Nueva Medicación</Button>}>
+ {saludMedicacion.length === 0 ? <Empty description="Sin medicación cargada" /> : <Table rowKey="id" scroll={{ x:'max-content' }} dataSource={saludMedicacion} pagination={{ pageSize: 8 }} columns={[
+ { title:'NOMBRE', dataIndex:'nombre', key:'nombre', render: (v, r) => <span>{v}{!r.activo && <Tag style={{marginLeft:6}}>Inactiva</Tag>}</span> },
+ { title:'DOSIS', dataIndex:'dosis', key:'dosis' },
+ { title:'HORARIOS', dataIndex:'horarios', key:'horarios', render: v => (v||[]).map(h => String(h).slice(0,5)).join(', ') || '-' },
+ { title:'DESDE', dataIndex:'fecha_inicio', key:'fecha_inicio', render: v => v ? dayjs(v).format('DD/MM/YYYY') : '-' },
+ { title:'HASTA', dataIndex:'fecha_fin', key:'fecha_fin', render: v => v ? dayjs(v).format('DD/MM/YYYY') : 'Continúa' },
+ { title:'', key:'acciones', render: (_, r) => <Space size={4}><Button size="small" type="link" onClick={() => toggleMedicacionActivo(r)}>{r.activo ? 'Pausar' : 'Reactivar'}</Button><Button size="small" type="link" onClick={() => openEditMedicacionModal(r)}>Editar</Button><Button size="small" type="link" danger onClick={() => handleDeleteMedicacion(r.id)}>Borrar</Button></Space> }
+ ]} />}
+ </Card>
+ )},
+ { key: 'turnos', label: 'Turnos y Estudios', children: (
+ <Card className="premium-card" extra={<Button type="primary" size="small" icon={PlusOutlined && <PlusOutlined />} onClick={openNewTurnoModal}>Nuevo Turno/Estudio</Button>}>
+ {saludTurnos.length === 0 ? <Empty description="Sin turnos ni estudios cargados" /> : <Table rowKey="id" scroll={{ x:'max-content' }} dataSource={saludTurnos} pagination={{ pageSize: 8 }} columns={[
+ { title:'FECHA', dataIndex:'fecha', key:'fecha', render: v => v ? dayjs(v).format('DD/MM/YYYY') : '-' },
+ { title:'HORA', dataIndex:'hora', key:'hora', render: v => v ? String(v).slice(0,5) : '-' },
+ { title:'TIPO', dataIndex:'tipo', key:'tipo', render: v => <Tag color={v==='Estudio' ? 'purple' : 'blue'}>{v}</Tag> },
+ { title:'LUGAR / MÉDICO', dataIndex:'lugar_o_medico', key:'lugar_o_medico' },
+ { title:'ESTADO', dataIndex:'estado', key:'estado', render: v => <Tag color={v==='Realizado' ? 'green' : v==='Cancelado' ? 'red' : 'orange'}>{v}</Tag> },
+ { title:'ARCHIVOS', dataIndex:'archivos', key:'archivos', render: v => (v && v.length) ? <Space>{v.map((url,i) => <a key={i} href={url} target="_blank" rel="noreferrer">{PaperClipOutlined && <PaperClipOutlined />}</a>)}</Space> : '-' },
+ { title:'', key:'acciones', render: (_, r) => <Space size={4}><Button size="small" type="link" onClick={() => handleToggleTurnoEstado(r)}>{r.estado==='Realizado' ? 'Marcar pendiente' : 'Marcar realizado'}</Button><Button size="small" type="link" onClick={() => openEditTurnoModal(r)}>Editar</Button><Button size="small" type="link" danger onClick={() => handleDeleteTurno(r.id)}>Borrar</Button></Space> }
+ ]} />}
+ </Card>
+ )},
+ { key: 'historia', label: 'Historia Clínica', children: (
+ <Card className="premium-card">
+ {historiaClinicaItems.length === 0 ? <Empty description="Todavía no hay eventos registrados" /> :
+ <Timeline items={historiaClinicaItems.map((it, idx) =>({ key: idx, color: it.color, children: (
+ <div><div style={{fontWeight:600}}>{it.titulo}</div><div style={{fontSize:12,color:'#888'}}>{dayjs(it.fecha).format('DD/MM/YYYY')}</div>{it.detalle && <div style={{fontSize:13,marginTop:2}}>{it.detalle}</div>}</div>
+ )}))} />}
+ </Card>
+ )}
+ ]} />
 </div>
 <div style={{ display: activeMenu === 'dashboard' ? 'block' : 'none' }}> <div style={{ marginBottom: 24 }}> <Title level={2} style={{ marginBottom: 4, color: PRIMARY_COLOR }}> Resumen de tu rendimiento</Title> <Text type="secondary" style={{ fontSize: 16 }}> Vista general de todas tus operaciones de prop trading.</Text> </div> <Row gutter={[16,16]} style={{ marginBottom: 24 }}> <Col xs={24} sm={8}> <Card className="premium-card" style={{ borderLeft: '4px solid #1677ff' }}> <div style={{ display:'flex', flexWrap:'wrap', rowGap:8, justifyContent:'space-between', alignItems:'flex-start' }}> <div><Text type="secondary" style={{ fontSize: 13 }}> Evaluaciones</Text><div style={{ fontSize: 28, fontWeight: 700, color: '#001529' }}>{evalAccounts.length}</div></div> <Tag color="blue">{evalAccounts.length > 0 ? evalAccounts.length + ' en progreso' : '0 en progreso'}</Tag> </div> </Card> </Col> <Col xs={24} sm={8}> <Card className="premium-card" style={{ borderLeft: '4px solid #722ed1' }}> <div style={{ display:'flex', flexWrap:'wrap', rowGap:8, justifyContent:'space-between', alignItems:'flex-start' }}> <div><Text type="secondary" style={{ fontSize: 13 }}> Cuentas Live</Text><div style={{ fontSize: 28, fontWeight: 700, color: '#001529' }}>{cuentasLive}</div></div> <Tag color="purple">{cuentasLive} activas</Tag> </div> </Card> </Col> <Col xs={24} sm={8}> <Card className="premium-card" style={{ borderLeft: '4px solid #faad14' }}> <div style={{ display:'flex', flexWrap:'wrap', rowGap:8, justifyContent:'space-between', alignItems:'flex-start' }}> <div><Text type="secondary" style={{ fontSize: 13 }}> Funding Ratio</Text><div style={{ fontSize: 28, fontWeight: 700, color: '#001529' }}>{fundingRatio.toFixed(1)}%</div></div> <Tooltip title={totalPassed + ' pasadas de ' + totalPurchased + ' compradas - ' + totalBurned + ' quemadas'}> <Tag color={fundingRatio >= 30 ? 'green' : 'orange'}>{totalPassed}/{totalPurchased}</Tag> </Tooltip> </div> </Card> </Col> </Row> <Row gutter={[16,16]} style={{ marginBottom: 24 }}> <Col xs={24} sm={8}> <Card className="premium-card"> <div style={{ display:'flex', flexWrap:'wrap', rowGap:8, justifyContent:'space-between', alignItems:'flex-start' }}> <div><Text type="secondary" style={{ fontSize: 13 }}> Gastos Totales</Text><div style={{ fontSize: 28, fontWeight: 700, color: '#cf1322' }}> ${gastosCuentas.toLocaleString(undefined,{minimumFractionDigits:2})}</div><Text type="secondary" style={{ fontSize: 12 }}> USD</Text></div> <div style={{ fontSize: 12, color: '#888' }}> Promedio: ${totalPurchased > 0 ? (gastosCuentas/totalPurchased).toFixed(2) : '0.00'}</div> </div> </Card> </Col> <Col xs={24} sm={8}> <Card className="premium-card"> <div style={{ display:'flex', flexWrap:'wrap', rowGap:8, justifyContent:'space-between', alignItems:'flex-start' }}> <div><Text type="secondary" style={{ fontSize: 13 }}> Ganancias Totales</Text><div style={{ fontSize: 28, fontWeight: 700, color: '#3f8600' }}> ${gananciasCuentas.toLocaleString(undefined,{minimumFractionDigits:2})}</div><Text type="secondary" style={{ fontSize: 12 }}> USD</Text></div> <div style={{ fontSize: 12, color: '#888' }}> Promedio: ${retirosTotales > 0 ? (gananciasCuentas/retirosTotales).toFixed(2) : '0.00'}</div> </div> </Card> </Col> <Col xs={24} sm={8}> <Card className="premium-card"> <div style={{ display:'flex', flexWrap:'wrap', rowGap:8, justifyContent:'space-between', alignItems:'flex-start' }}> <div><Text type="secondary" style={{ fontSize: 13 }}> Beneficio Neto</Text><div style={{ fontSize: 28, fontWeight: 700, color: beneficioNeto >= 0 ? '#3f8600' : '#cf1322' }}>{beneficioNeto >= 0 ? '' : '-'}${Math.abs(beneficioNeto).toLocaleString(undefined,{minimumFractionDigits:2})}</div><Text type="secondary" style={{ fontSize: 12 }}> USD</Text></div> <div style={{ fontSize: 12, color: roiGeneral >= 0 ? '#3f8600' : '#cf1322' }}> ROI: {roiGeneral.toFixed(1)}%</div> </div> </Card> </Col> </Row> <Row gutter={[16,16]} style={{ marginBottom: 24 }}> <Col xs={24} sm={6}><Card className="premium-card" style={{ textAlign: 'center' }}><Text type="secondary" style={{ fontSize: 12 }}>Mejor Día</Text><div style={{ fontSize: 22, fontWeight: 700, color: '#3f8600' }}> ${mejorDia.toFixed(2)}</div><Text type="secondary" style={{ fontSize: 11 }}> Mayor ganancia diaria</Text></Card></Col> <Col xs={24} sm={6}><Card className="premium-card" style={{ textAlign: 'center' }}><Text type="secondary" style={{ fontSize: 12 }}>Peor Día</Text><div style={{ fontSize: 22, fontWeight: 700, color: '#cf1322' }}> ${peorDia.toFixed(2)}</div><Text type="secondary" style={{ fontSize: 11 }}> Mayor pérdida diaria</Text></Card></Col> <Col xs={24} sm={6}><Card className="premium-card" style={{ textAlign: 'center' }}><Text type="secondary" style={{ fontSize: 12 }}>Promedio Diario</Text><div style={{ fontSize: 22, fontWeight: 700, color: promedioDiario >= 0 ? '#3f8600' : '#cf1322' }}> ${promedioDiario.toFixed(2)}</div><Text type="secondary" style={{ fontSize: 11 }}> Cambio promedio por día</Text></Card></Col> <Col xs={24} sm={6}><Card className="premium-card" style={{ textAlign: 'center' }}><Text type="secondary" style={{ fontSize: 12 }}>Retiros</Text><div style={{ fontSize: 22, fontWeight: 700, color: '#001529' }}>{retirosTotales}</div><Text type="secondary" style={{ fontSize: 11 }}> Número de retiros realizados</Text></Card></Col> </Row> <Title level={4} style={{ marginBottom: 16, marginTop: 8 }}> Análisis por Empresa</Title> <Text type="secondary" style={{ display:'block', marginBottom: 16 }}> Rendimiento detallado de cada prop firm.</Text> <Row gutter={[16,16]} style={{ marginBottom: 24 }}> <Col xs={24} sm={12}> <Card className="premium-card" title={<span> Top Empresas por ROI</span>}> {empresasList.map((emp, idx) =>(<div key={emp.nombre} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom: idx < empresasList.length-1 ? '1px solid #f0f0f0' : 'none' }}><div style={{ display:'flex', alignItems:'center', gap: 8 }}><span style={{ background:'#f0f0f0', borderRadius:'50%', width:24, height:24, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:600 }}>{idx+1}</span><div><div style={{ fontWeight: 600 }}>{emp.nombre}</div><div style={{ fontSize: 12, color: '#888' }}>{emp.cuentas} cuentas</div></div></div><div style={{ textAlign:'right' }}><div style={{ fontWeight: 600, color: emp.roi >= 0 ? '#3f8600' : '#cf1322' }}>{emp.roi.toFixed(1)}%</div><div style={{ fontSize: 12, color: '#888' }}>{emp.beneficio >= 0 ? '' : '-'}${Math.abs(emp.beneficio).toFixed(2)}</div></div></div>))}
  {empresasList.length === 0 && <div style={{ textAlign:'center', color:'#999', padding: 16 }}> Sin datos</div>}
@@ -3589,7 +3843,62 @@
  const trade={...values,fecha:values.fecha?values.fecha.format('YYYY-MM-DD'):null,periodo_historico:values.periodo_historico?values.periodo_historico.format('YYYY-MM-DD'):null,sl_pts:values.entrada&&values.sl?Math.abs(parseFloat(values.entrada)-parseFloat(values.sl)).toFixed(2):values.sl_pts,pnl:parseFloat(values.pnl)||0,user_id:'Carlos',imagenes:journalImages};
  try{if(window._journalUseSupabase){if(journalEditId){await supabase.from('trading_journal').update(trade).eq('id',journalEditId);}else{await supabase.from('trading_journal').insert([trade]);}}else{const stored=JSON.parse(localStorage.getItem('trading_journal')||'[]');if(journalEditId){const idx=stored.findIndex(t=> t.id===journalEditId);if(idx>=0)stored[idx]={...stored[idx],...trade};}else{trade.id=Date.now();trade.created_at=new Date().toISOString();stored.push(trade);}localStorage.setItem('trading_journal',JSON.stringify(stored));}
  message.success(journalEditId?'Trade actualizado':'Trade registrado');setJournalModalOpen(false);setJournalImages([]);loadJournalTrades();}catch(err){message.error('Error: '+err.message);}}}> <Row gutter={16}><Col span={8}><Form.Item name="fecha" label="Fecha" rules={[{required:true}]}><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item></Col><Col span={8}><Form.Item name="hora" label="Hora (ET)"><Input placeholder="13:45"/></Form.Item></Col><Col span={8}><Form.Item name="cuenta" label="Cuenta" rules={[{required:true}]}><Input placeholder="EVAL-001"/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="tipo_cuenta" label="Tipo"><Select options={[{value:'Eval',label:'Eval'},{value:'Funded',label:'Funded'},{value:'SIM',label:'SIM'}]}/></Form.Item></Col><Col span={8}><Form.Item name="instrumento" label="Instrumento"><Input placeholder="MNQ"/></Form.Item></Col><Col span={8}><Form.Item name="direccion" label="Direccion" rules={[{required:true}]}><Select options={[{value:'BUY',label:'BUY'},{value:'SELL',label:'SELL'}]}/></Form.Item></Col></Row>{journalActiveTab === 'backtesting' && <Row gutter={16}><Col span={12}><Form.Item name="herramienta_replay" label="Herramienta"><Select allowClear placeholder="Forex Replay, TV Replay..." options={[{value:'Forex Replay',label:'Forex Replay'},{value:'TradingView Replay',label:'TradingView Replay'},{value:'NinjaTrader Replay',label:'NinjaTrader Replay'},{value:'Otro',label:'Otro'}]}/></Form.Item></Col><Col span={12}><Form.Item name="periodo_historico" label="Período histórico simulado"><DatePicker style={{width:'100%'}} format="DD/MM/YYYY" placeholder="Fecha real que estás replayando"/></Form.Item></Col></Row>} <Row gutter={16}><Col span={6}><Form.Item name="grade" label="Grade Pre-Trade" rules={[{required:true}]}><Select options={[{value:'A+',label:'A+ (Perfecta)'},{value:'A',label:'A (Buena)'},{value:'B',label:'B (Mixta)'},{value:'Skip',label:'Skip'}]}/></Form.Item></Col></Row> <Row gutter={16}><Col span={6}><Form.Item name="entrada" label="Entrada"><InputNumber style={{width:'100%'}} step={0.25} precision={2}/></Form.Item></Col><Col span={6}><Form.Item name="sl" label="Stop Loss"><InputNumber style={{width:'100%'}} step={0.25} precision={2}/></Form.Item></Col><Col span={6}><Form.Item name="tp" label="Take Profit"><InputNumber style={{width:'100%'}} step={0.25} precision={2}/></Form.Item></Col><Col span={6}><Form.Item name="rr_ratio" label="R:R Ratio"><InputNumber style={{width:'100%'}} step={0.1} precision={1} min={0.5} max={5}/></Form.Item></Col></Row> <Row gutter={16}><Col span={6}><Form.Item name="contratos" label="Contratos"><InputNumber style={{width:'100%'}} min={1} max={10}/></Form.Item></Col><Col span={6}><Form.Item name="zona" label="Zona"><Select options={[{value:'Zona1-Agr',label:'Zona 1 Agresiva'},{value:'Zona2-Cons',label:'Zona 2 Conserv.'},{value:'Funded',label:'Funded Buffer'}]}/></Form.Item></Col><Col span={6}><Form.Item name="trade_num" label="Trade # dia"><InputNumber style={{width:'100%'}} min={1} max={3}/></Form.Item></Col><Col span={6}><Form.Item name="sponge_value" label="Sponge (ticks)"><InputNumber style={{width:'100%'}} min={0} max={200}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="resultado" label="Resultado" rules={[{required:true}]}><Select options={[{value:'Pendiente',label:'Pendiente'},{value:'TP',label:'TP'},{value:'SL',label:'SL'},{value:'BE',label:'BE'},{value:'Parcial',label:'Parcial'},{value:'CS',label:'CS'}]}/></Form.Item></Col><Col span={8}><Form.Item name="pnl" label="PnL ($)"><InputNumber style={{width:'100%'}} step={0.50} precision={2}/></Form.Item></Col><Col span={8}><Form.Item name="sl_pts" label="SL Puntos (auto)"><InputNumber style={{width:'100%'}} step={0.25} precision={2} disabled/></Form.Item></Col></Row> <Form.Item label="Capturas del trade"> <div onPaste={handleJournalImagePaste} tabIndex={0} style={{border:'2px dashed #4a4a6a',borderRadius:8,padding:'16px',textAlign:'center',background:'#141428',cursor:'text',outline:'none'}}> <input type="file" ref={journalImageFileRef} style={{display:'none'}} accept="image/*" multiple onChange={e =>{ Array.from(e.target.files||[]).forEach(f => uploadJournalImageFile(f)); e.target.value=null; }} /> <div style={{color:'#888',fontSize:13,marginBottom:8}}>Hace click acá y pegá una captura (Ctrl+V) o subí un archivo</div> <Button size="small" loading={uploadingJournalImage} onClick={() => journalImageFileRef.current && journalImageFileRef.current.click()}>Seleccionar imagen</Button> </div> {journalImages.length > 0 && <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}}> {journalImages.map((url, idx) =>( <div key={idx} style={{position:'relative'}}> <Image src={url} width={80} height={80} style={{objectFit:'cover',borderRadius:6}} /> <Button size="small" danger shape="circle" onClick={() => removeJournalImage(idx)} style={{position:'absolute',top:-8,right:-8,minWidth:22,width:22,height:22,padding:0,lineHeight:'20px'}}>X</Button> </div> ))} </div>} </Form.Item> <Form.Item name="notas" label="Notas / Observaciones"><Input.TextArea rows={3} placeholder="Contexto del trade, calidad de senal, condiciones de mercado..."/></Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit" size="large">{journalEditId?'Actualizar':'Guardar Trade'}</Button><Button onClick={()=>{ setJournalModalOpen(false); setJournalImages([]); }}> Cancelar</Button></Space></Form.Item> </Form>
-</Modal> <Modal title="Cerrar Trade" open={closeTradeModalOpen} onCancel={()=>{ setCloseTradeModalOpen(false); setCloseTradeRecord(null); setCloseTradeImages([]); }} footer={null} destroyOnClose width={420}> <Form form={closeForm} layout="vertical" onFinish={handleCloseTradeSubmit}> <Form.Item name="resultado" label="Resultado" rules={[{required:true}]}><Select options={[{value:'TP',label:'TP'},{value:'SL',label:'SL'},{value:'BE',label:'BE'},{value:'Parcial',label:'Parcial'},{value:'CS',label:'CS'}]}/></Form.Item> <Form.Item name="pnl" label="PnL ($)" rules={[{required:true}]}><InputNumber style={{width:'100%'}} step={0.50} precision={2}/></Form.Item> <Form.Item label="Captura de cierre"> <div onPaste={e => handleJournalImagePaste(e, setCloseTradeImages)} tabIndex={0} style={{border:'2px dashed #4a4a6a',borderRadius:8,padding:'12px',textAlign:'center',background:'#141428',cursor:'text',outline:'none'}}> <input type="file" ref={closeImageFileRef} style={{display:'none'}} accept="image/*" multiple onChange={e =>{ Array.from(e.target.files||[]).forEach(f => uploadJournalImageFile(f, setCloseTradeImages)); e.target.value=null; }} /> <div style={{color:'#888',fontSize:12,marginBottom:6}}>Pegá (Ctrl+V) o subí la captura de cómo cerró</div> <Button size="small" loading={uploadingJournalImage} onClick={() => closeImageFileRef.current && closeImageFileRef.current.click()}>Seleccionar imagen</Button> </div> {closeTradeImages.length > 0 && <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}}> {closeTradeImages.map((url, idx) =>( <div key={idx} style={{position:'relative'}}> <Image src={url} width={70} height={70} style={{objectFit:'cover',borderRadius:6}} /> <Button size="small" danger shape="circle" onClick={() => setCloseTradeImages(prev => prev.filter((_,i)=> i!==idx))} style={{position:'absolute',top:-8,right:-8,minWidth:22,width:22,height:22,padding:0,lineHeight:'20px'}}>X</Button> </div> ))} </div>} </Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">Guardar Cierre</Button><Button onClick={()=>{ setCloseTradeModalOpen(false); setCloseTradeRecord(null); setCloseTradeImages([]); }}>Cancelar</Button></Space></Form.Item> </Form> </Modal> <Modal title={editingNote ? 'Editar Nota' : 'Nueva Nota'} open={isNoteModalVisible} onCancel={() =>{ setIsNoteModalVisible(false); setEditingNote(null); setNoteImages([]); }} footer={null} destroyOnClose width={480}> <Form form={noteForm} layout="vertical" onFinish={handleNoteSubmit}> <Form.Item name="texto" label="Texto"><Input.TextArea rows={5} placeholder="Escribí lo que quieras anotar..."/></Form.Item> <Form.Item label="Imagen (opcional)"> <div onPaste={e => handleJournalImagePaste(e, setNoteImages, 'journal-media')} tabIndex={0} style={{border:'2px dashed #4a4a6a',borderRadius:8,padding:'14px',textAlign:'center',background:'#141428',cursor:'text',outline:'none'}}> <input type="file" ref={noteImageFileRef} style={{display:'none'}} accept="image/*" multiple onChange={e =>{ Array.from(e.target.files||[]).forEach(f => uploadJournalImageFile(f, setNoteImages, 'journal-media')); e.target.value=null; }} /> <div style={{color:'#888',fontSize:12,marginBottom:6}}>Pegá (Ctrl+V) una foto de tu anotación a mano, o subí un archivo</div> <Button size="small" loading={uploadingJournalImage} onClick={() => noteImageFileRef.current && noteImageFileRef.current.click()}>Seleccionar imagen</Button> </div> {noteImages.length > 0 && <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}}> {noteImages.map((url, idx) =>( <div key={idx} style={{position:'relative'}}> <Image src={url} width={80} height={80} style={{objectFit:'cover',borderRadius:6}} /> <Button size="small" danger shape="circle" onClick={() => setNoteImages(prev => prev.filter((_,i)=> i!==idx))} style={{position:'absolute',top:-8,right:-8,minWidth:22,width:22,height:22,padding:0,lineHeight:'20px'}}>X</Button> </div> ))} </div>} </Form.Item> <Form.Item label="Audio (opcional)"> <div style={{border:'2px dashed #4a4a6a',borderRadius:8,padding:'14px',textAlign:'center',background:'#141428'}}> {!isRecordingNote ? <Button icon={<span>🎤</span>} loading={uploadingJournalImage} onClick={startRecordingNote}>Grabar Audio</Button> : <Space direction="vertical"><Text style={{color:'#ff4d4f'}}>● Grabando... {formatRecTime(recordingSeconds)}</Text><Button danger onClick={stopRecordingNote}>Detener y Guardar</Button></Space>} </div> {noteAudios.length > 0 && <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:10}}> {noteAudios.map((url, idx) =>( <div key={idx} style={{display:'flex',alignItems:'center',gap:8}}> <audio controls src={url} style={{height:32,flex:1}} /> <Button size="small" danger onClick={() => setNoteAudios(prev => prev.filter((_,i)=> i!==idx))}>X</Button> </div> ))} </div>} </Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingNote?'Actualizar':'Guardar Nota'}</Button><Button onClick={()=>{ setIsNoteModalVisible(false); setEditingNote(null); setNoteImages([]); setNoteAudios([]); }}>Cancelar</Button>{editingNote && <Button danger onClick={() =>{ handleDeleteNote(editingNote.id); setIsNoteModalVisible(false); setEditingNote(null); }}>Eliminar</Button>}</Space></Form.Item> </Form> </Modal> <Modal title={editingTask ? 'Editar Tarea' : 'Nueva Tarea'} open={isTaskModalVisible} onCancel={() =>{ setIsTaskModalVisible(false); setEditingTask(null); }} footer={null} destroyOnClose width={420}> <Form form={taskForm} layout="vertical" onFinish={handleTaskSubmit}> <Form.Item name="titulo" label="Título" rules={[{required:true}]}><Input placeholder="Ej. Pagar evaluación Tradeify"/></Form.Item> <Form.Item name="fecha" label="Fecha" rules={[{required:true}]}><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item> <Row gutter={12}><Col span={12}><Form.Item name="hora_inicio" label="Hora Inicio"><Input placeholder="09:00"/></Form.Item></Col><Col span={12}><Form.Item name="hora_fin" label="Hora Fin"><Input placeholder="10:00"/></Form.Item></Col></Row> <Row gutter={12}><Col span={12}><Form.Item name="categoria" label="Categoría"><Select options={[{value:'Trading',label:'Trading'},{value:'Personal',label:'Personal'},{value:'Administrativo',label:'Administrativo'},{value:'Otro',label:'Otro'}]}/></Form.Item></Col><Col span={12}><Form.Item name="prioridad" label="Prioridad"><Select options={[{value:'Alta',label:'Alta'},{value:'Media',label:'Media'},{value:'Baja',label:'Baja'}]}/></Form.Item></Col></Row> <Form.Item name="descripcion" label="Notas (opcional)"><Input.TextArea rows={2}/></Form.Item> <Form.Item name="estado" label="Estado" initialValue="Pendiente"><Select options={[{value:'Pendiente',label:'Pendiente'},{value:'Hecho',label:'Hecho'}]}/></Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingTask?'Actualizar':'Crear Tarea'}</Button><Button onClick={()=>{ setIsTaskModalVisible(false); setEditingTask(null); }}>Cancelar</Button></Space></Form.Item> </Form> </Modal> <Modal title={editingProfile ? 'Editar Perfil' : 'Nuevo Perfil de Empresa'} open={isProfileModalVisible} onCancel={() =>{ setIsProfileModalVisible(false); setEditingProfile(null); }} footer={null} destroyOnClose width={640}> <Form form={profileForm} layout="vertical" onFinish={handleProfileSubmit}> <Row gutter={16}><Col span={12}><Form.Item name="firma" label="Empresa" rules={[{required:true}]}><Input placeholder="Ej. Lucid"/></Form.Item></Col><Col span={12}><Form.Item name="tipo_cuenta" label="Tipo de Cuenta" rules={[{required:true}]}><Input placeholder="Ej. Flex 50K"/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="tamano_cuenta" label="Tamaño Cuenta ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="costo_evaluacion" label="Costo Evaluación ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="objetivo_evaluacion" label="Objetivo Eval ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="dias_min_evaluacion" label="Días Mín. Eval"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={16}><Form.Item name="reglas_consistencia" label="Regla de Consistencia"><Input placeholder="Ej. Máx 40% de la ganancia en un día"/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="drawdown_type" label="Tipo Drawdown" initialValue="EOD"><Select><Select.Option value="EOD">EOD</Select.Option><Select.Option value="Trailing">Trailing</Select.Option><Select.Option value="Fijo">Fijo</Select.Option></Select></Form.Item></Col><Col span={8}><Form.Item name="max_drawdown" label="Drawdown Máx ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="initial_trail_balance" label="Balance de Lock ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="mll_bloqueada" label="MLL Bloqueada ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="dias_calif_necesarios" label="Días Calif. p/Retiro" initialValue={5}><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="minimo_diario_calificante" label="Mín. Diario ($)" initialValue={150}><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="retiro_max_ciclo" label="Retiro Máx Ciclo ($)" initialValue={2000}><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="pct_max_retiro_ciclo" label="% Máx s/Ganancia" initialValue={0.5}><InputNumber style={{width:'100%'}} step={0.05} min={0} max={1}/></Form.Item></Col><Col span={8}><Form.Item name="ciclos_max" label="Ciclos Máx" initialValue={5}><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="split_trader" label="Split Trader" initialValue={0.9}><InputNumber style={{width:'100%'}} step={0.05} min={0} max={1}/></Form.Item></Col><Col span={8}><Form.Item name="dias_inactividad_max" label="Días Inactividad Máx" initialValue={30}><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="verificado" label="Estado" initialValue={false}><Select><Select.Option value={false}>A verificar</Select.Option><Select.Option value={true}>Verificado</Select.Option></Select></Form.Item></Col></Row> <Form.Item name="notas" label="Notas"><Input.TextArea rows={2}/></Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingProfile?'Actualizar':'Crear Perfil'}</Button><Button onClick={()=>{ setIsProfileModalVisible(false); setEditingProfile(null); }}>Cancelar</Button></Space></Form.Item> </Form> </Modal> </Content> </Layout> </Layout> {/* Modal Nueva Estrategia */}
+</Modal> <Modal title="Cerrar Trade" open={closeTradeModalOpen} onCancel={()=>{ setCloseTradeModalOpen(false); setCloseTradeRecord(null); setCloseTradeImages([]); }} footer={null} destroyOnClose width={420}> <Form form={closeForm} layout="vertical" onFinish={handleCloseTradeSubmit}> <Form.Item name="resultado" label="Resultado" rules={[{required:true}]}><Select options={[{value:'TP',label:'TP'},{value:'SL',label:'SL'},{value:'BE',label:'BE'},{value:'Parcial',label:'Parcial'},{value:'CS',label:'CS'}]}/></Form.Item> <Form.Item name="pnl" label="PnL ($)" rules={[{required:true}]}><InputNumber style={{width:'100%'}} step={0.50} precision={2}/></Form.Item> <Form.Item label="Captura de cierre"> <div onPaste={e => handleJournalImagePaste(e, setCloseTradeImages)} tabIndex={0} style={{border:'2px dashed #4a4a6a',borderRadius:8,padding:'12px',textAlign:'center',background:'#141428',cursor:'text',outline:'none'}}> <input type="file" ref={closeImageFileRef} style={{display:'none'}} accept="image/*" multiple onChange={e =>{ Array.from(e.target.files||[]).forEach(f => uploadJournalImageFile(f, setCloseTradeImages)); e.target.value=null; }} /> <div style={{color:'#888',fontSize:12,marginBottom:6}}>Pegá (Ctrl+V) o subí la captura de cómo cerró</div> <Button size="small" loading={uploadingJournalImage} onClick={() => closeImageFileRef.current && closeImageFileRef.current.click()}>Seleccionar imagen</Button> </div> {closeTradeImages.length > 0 && <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}}> {closeTradeImages.map((url, idx) =>( <div key={idx} style={{position:'relative'}}> <Image src={url} width={70} height={70} style={{objectFit:'cover',borderRadius:6}} /> <Button size="small" danger shape="circle" onClick={() => setCloseTradeImages(prev => prev.filter((_,i)=> i!==idx))} style={{position:'absolute',top:-8,right:-8,minWidth:22,width:22,height:22,padding:0,lineHeight:'20px'}}>X</Button> </div> ))} </div>} </Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">Guardar Cierre</Button><Button onClick={()=>{ setCloseTradeModalOpen(false); setCloseTradeRecord(null); setCloseTradeImages([]); }}>Cancelar</Button></Space></Form.Item> </Form> </Modal> <Modal title={editingNote ? 'Editar Nota' : 'Nueva Nota'} open={isNoteModalVisible} onCancel={() =>{ setIsNoteModalVisible(false); setEditingNote(null); setNoteImages([]); }} footer={null} destroyOnClose width={480}> <Form form={noteForm} layout="vertical" onFinish={handleNoteSubmit}> <Form.Item name="texto" label="Texto"><Input.TextArea rows={5} placeholder="Escribí lo que quieras anotar..."/></Form.Item> <Form.Item label="Imagen (opcional)"> <div onPaste={e => handleJournalImagePaste(e, setNoteImages, 'journal-media')} tabIndex={0} style={{border:'2px dashed #4a4a6a',borderRadius:8,padding:'14px',textAlign:'center',background:'#141428',cursor:'text',outline:'none'}}> <input type="file" ref={noteImageFileRef} style={{display:'none'}} accept="image/*" multiple onChange={e =>{ Array.from(e.target.files||[]).forEach(f => uploadJournalImageFile(f, setNoteImages, 'journal-media')); e.target.value=null; }} /> <div style={{color:'#888',fontSize:12,marginBottom:6}}>Pegá (Ctrl+V) una foto de tu anotación a mano, o subí un archivo</div> <Button size="small" loading={uploadingJournalImage} onClick={() => noteImageFileRef.current && noteImageFileRef.current.click()}>Seleccionar imagen</Button> </div> {noteImages.length > 0 && <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}}> {noteImages.map((url, idx) =>( <div key={idx} style={{position:'relative'}}> <Image src={url} width={80} height={80} style={{objectFit:'cover',borderRadius:6}} /> <Button size="small" danger shape="circle" onClick={() => setNoteImages(prev => prev.filter((_,i)=> i!==idx))} style={{position:'absolute',top:-8,right:-8,minWidth:22,width:22,height:22,padding:0,lineHeight:'20px'}}>X</Button> </div> ))} </div>} </Form.Item> <Form.Item label="Audio (opcional)"> <div style={{border:'2px dashed #4a4a6a',borderRadius:8,padding:'14px',textAlign:'center',background:'#141428'}}> {!isRecordingNote ? <Button icon={<span>🎤</span>} loading={uploadingJournalImage} onClick={startRecordingNote}>Grabar Audio</Button> : <Space direction="vertical"><Text style={{color:'#ff4d4f'}}>● Grabando... {formatRecTime(recordingSeconds)}</Text><Button danger onClick={stopRecordingNote}>Detener y Guardar</Button></Space>} </div> {noteAudios.length > 0 && <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:10}}> {noteAudios.map((url, idx) =>( <div key={idx} style={{display:'flex',alignItems:'center',gap:8}}> <audio controls src={url} style={{height:32,flex:1}} /> <Button size="small" danger onClick={() => setNoteAudios(prev => prev.filter((_,i)=> i!==idx))}>X</Button> </div> ))} </div>} </Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingNote?'Actualizar':'Guardar Nota'}</Button><Button onClick={()=>{ setIsNoteModalVisible(false); setEditingNote(null); setNoteImages([]); setNoteAudios([]); }}>Cancelar</Button>{editingNote && <Button danger onClick={() =>{ handleDeleteNote(editingNote.id); setIsNoteModalVisible(false); setEditingNote(null); }}>Eliminar</Button>}</Space></Form.Item> </Form> </Modal> <Modal title={editingTask ? 'Editar Tarea' : 'Nueva Tarea'} open={isTaskModalVisible} onCancel={() =>{ setIsTaskModalVisible(false); setEditingTask(null); }} footer={null} destroyOnClose width={420}> <Form form={taskForm} layout="vertical" onFinish={handleTaskSubmit}> <Form.Item name="titulo" label="Título" rules={[{required:true}]}><Input placeholder="Ej. Pagar evaluación Tradeify"/></Form.Item> <Form.Item name="fecha" label="Fecha" rules={[{required:true}]}><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item> <Row gutter={12}><Col span={12}><Form.Item name="hora_inicio" label="Hora Inicio"><Input placeholder="09:00"/></Form.Item></Col><Col span={12}><Form.Item name="hora_fin" label="Hora Fin"><Input placeholder="10:00"/></Form.Item></Col></Row> <Row gutter={12}><Col span={12}><Form.Item name="categoria" label="Categoría"><Select options={[{value:'Trading',label:'Trading'},{value:'Personal',label:'Personal'},{value:'Administrativo',label:'Administrativo'},{value:'Otro',label:'Otro'}]}/></Form.Item></Col><Col span={12}><Form.Item name="prioridad" label="Prioridad"><Select options={[{value:'Alta',label:'Alta'},{value:'Media',label:'Media'},{value:'Baja',label:'Baja'}]}/></Form.Item></Col></Row> <Form.Item name="descripcion" label="Notas (opcional)"><Input.TextArea rows={2}/></Form.Item> <Form.Item name="estado" label="Estado" initialValue="Pendiente"><Select options={[{value:'Pendiente',label:'Pendiente'},{value:'Hecho',label:'Hecho'}]}/></Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingTask?'Actualizar':'Crear Tarea'}</Button><Button onClick={()=>{ setIsTaskModalVisible(false); setEditingTask(null); }}>Cancelar</Button></Space></Form.Item> </Form> </Modal>
+<Modal title={editingConsulta ? 'Editar Consulta' : 'Nueva Consulta'} open={isConsultaModalVisible} onCancel={() =>{ setIsConsultaModalVisible(false); setEditingConsulta(null); }} footer={null} destroyOnClose width={480}>
+<Form form={consultaForm} layout="vertical" onFinish={handleConsultaSubmit}>
+<Row gutter={12}><Col span={12}><Form.Item name="fecha" label="Fecha" rules={[{required:true}]}><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item></Col><Col span={12}><Form.Item name="especialidad" label="Especialidad"><Input placeholder="Ej. Traumatología"/></Form.Item></Col></Row>
+<Form.Item name="medico" label="Médico"><Input placeholder="Nombre del médico"/></Form.Item>
+<Form.Item name="motivo" label="Motivo"><Input.TextArea rows={2}/></Form.Item>
+<Form.Item name="diagnostico" label="Diagnóstico"><Input.TextArea rows={2}/></Form.Item>
+<Form.Item name="notas" label="Notas / tratamiento indicado"><Input.TextArea rows={3}/></Form.Item>
+<Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingConsulta?'Actualizar':'Guardar Consulta'}</Button><Button onClick={()=>{ setIsConsultaModalVisible(false); setEditingConsulta(null); }}>Cancelar</Button>{editingConsulta && <Button danger onClick={() =>{ handleDeleteConsulta(editingConsulta.id); setIsConsultaModalVisible(false); setEditingConsulta(null); }}>Eliminar</Button>}</Space></Form.Item>
+</Form>
+</Modal>
+<Modal title={editingMedicacion ? 'Editar Medicación' : 'Nueva Medicación'} open={isMedicacionModalVisible} onCancel={() =>{ setIsMedicacionModalVisible(false); setEditingMedicacion(null); setMedHorarios([]); }} footer={null} destroyOnClose width={480}>
+<Form form={medicacionForm} layout="vertical" onFinish={handleMedicacionSubmit}>
+<Row gutter={12}><Col span={14}><Form.Item name="nombre" label="Nombre" rules={[{required:true}]}><Input placeholder="Ej. Ibuprofeno"/></Form.Item></Col><Col span={10}><Form.Item name="dosis" label="Dosis"><Input placeholder="Ej. 400mg"/></Form.Item></Col></Row>
+<Form.Item name="indicacion" label="Indicación / para qué"><Input placeholder="Ej. Analgesia dolor lumbar"/></Form.Item>
+<Form.Item label="Horarios de toma">
+<Space direction="vertical" style={{width:'100%'}}>
+{medHorarios.map((h, idx) => (
+<Space key={idx}>
+<TimePicker value={h} format="HH:mm" onChange={(val) => setMedHorarios(prev => prev.map((p,i) => i===idx ? val : p))} />
+<Button size="small" danger onClick={() => setMedHorarios(prev => prev.filter((_,i) => i!==idx))}>Quitar</Button>
+</Space>
+))}
+<Button size="small" icon={PlusOutlined && <PlusOutlined />} onClick={() => setMedHorarios(prev => [...prev, dayjs('08:00','HH:mm')])}>Agregar horario</Button>
+</Space>
+</Form.Item>
+<Row gutter={12}><Col span={12}><Form.Item name="fecha_inicio" label="Desde" rules={[{required:true}]}><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item></Col><Col span={12}><Form.Item name="fecha_fin" label="Hasta (opcional)"><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item></Col></Row>
+<Form.Item name="activo" label="Estado" initialValue={true}><Select options={[{value:true,label:'Activa'},{value:false,label:'Pausada'}]}/></Form.Item>
+<Form.Item name="notas" label="Notas"><Input.TextArea rows={2}/></Form.Item>
+<Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingMedicacion?'Actualizar':'Guardar Medicación'}</Button><Button onClick={()=>{ setIsMedicacionModalVisible(false); setEditingMedicacion(null); setMedHorarios([]); }}>Cancelar</Button>{editingMedicacion && <Button danger onClick={() =>{ handleDeleteMedicacion(editingMedicacion.id); setIsMedicacionModalVisible(false); setEditingMedicacion(null); setMedHorarios([]); }}>Eliminar</Button>}</Space></Form.Item>
+</Form>
+</Modal>
+<Modal title={editingTurno ? 'Editar Turno/Estudio' : 'Nuevo Turno/Estudio'} open={isTurnoModalVisible} onCancel={() =>{ setIsTurnoModalVisible(false); setEditingTurno(null); setTurnoArchivos([]); }} footer={null} destroyOnClose width={480}>
+<Form form={turnoForm} layout="vertical" onFinish={handleTurnoSubmit}>
+<Row gutter={12}><Col span={10}><Form.Item name="tipo" label="Tipo" rules={[{required:true}]}><Select options={[{value:'Turno',label:'Turno'},{value:'Estudio',label:'Estudio'}]}/></Form.Item></Col><Col span={14}><Form.Item name="lugar_o_medico" label="Lugar / Médico"><Input placeholder="Ej. Sanatorio, Dr. Pérez"/></Form.Item></Col></Row>
+<Row gutter={12}><Col span={12}><Form.Item name="fecha" label="Fecha" rules={[{required:true}]}><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item></Col><Col span={12}><Form.Item name="hora" label="Hora (opcional)"><TimePicker style={{width:'100%'}} format="HH:mm"/></Form.Item></Col></Row>
+<Form.Item name="motivo" label="Motivo"><Input.TextArea rows={2}/></Form.Item>
+<Form.Item name="estado" label="Estado" initialValue="Pendiente"><Select options={[{value:'Pendiente',label:'Pendiente'},{value:'Realizado',label:'Realizado'},{value:'Cancelado',label:'Cancelado'}]}/></Form.Item>
+<Form.Item label="Archivos (resultados, órdenes, etc.)">
+<div><input type="file" ref={turnoFileRef} style={{display:'none'}} onChange={e =>{ Array.from(e.target.files||[]).forEach(f => uploadJournalImageFile(f, setTurnoArchivos, 'journal-media')); e.target.value=null; }} />
+<Button size="small" loading={uploadingJournalImage} onClick={() => turnoFileRef.current && turnoFileRef.current.click()}>Adjuntar archivo</Button>
+</div>
+{turnoArchivos.length > 0 && <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:10}}>
+{turnoArchivos.map((url, idx) => (
+<div key={idx} style={{display:'flex',alignItems:'center',gap:8}}>
+<a href={url} target="_blank" rel="noreferrer" style={{fontSize:12}}>{PaperClipOutlined && <PaperClipOutlined />} Archivo {idx+1}</a>
+<Button size="small" danger onClick={() => setTurnoArchivos(prev => prev.filter((_,i)=> i!==idx))}>X</Button>
+</div>
+))}
+</div>}
+</Form.Item>
+<Form.Item name="notas" label="Notas"><Input.TextArea rows={2}/></Form.Item>
+<Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingTurno?'Actualizar':'Guardar'}</Button><Button onClick={()=>{ setIsTurnoModalVisible(false); setEditingTurno(null); setTurnoArchivos([]); }}>Cancelar</Button>{editingTurno && <Button danger onClick={() =>{ handleDeleteTurno(editingTurno.id); setIsTurnoModalVisible(false); setEditingTurno(null); setTurnoArchivos([]); }}>Eliminar</Button>}</Space></Form.Item>
+</Form>
+</Modal>
+<Modal title={editingProfile ? 'Editar Perfil' : 'Nuevo Perfil de Empresa'} open={isProfileModalVisible} onCancel={() =>{ setIsProfileModalVisible(false); setEditingProfile(null); }} footer={null} destroyOnClose width={640}> <Form form={profileForm} layout="vertical" onFinish={handleProfileSubmit}> <Row gutter={16}><Col span={12}><Form.Item name="firma" label="Empresa" rules={[{required:true}]}><Input placeholder="Ej. Lucid"/></Form.Item></Col><Col span={12}><Form.Item name="tipo_cuenta" label="Tipo de Cuenta" rules={[{required:true}]}><Input placeholder="Ej. Flex 50K"/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="tamano_cuenta" label="Tamaño Cuenta ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="costo_evaluacion" label="Costo Evaluación ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="objetivo_evaluacion" label="Objetivo Eval ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="dias_min_evaluacion" label="Días Mín. Eval"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={16}><Form.Item name="reglas_consistencia" label="Regla de Consistencia"><Input placeholder="Ej. Máx 40% de la ganancia en un día"/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="drawdown_type" label="Tipo Drawdown" initialValue="EOD"><Select><Select.Option value="EOD">EOD</Select.Option><Select.Option value="Trailing">Trailing</Select.Option><Select.Option value="Fijo">Fijo</Select.Option></Select></Form.Item></Col><Col span={8}><Form.Item name="max_drawdown" label="Drawdown Máx ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="initial_trail_balance" label="Balance de Lock ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="mll_bloqueada" label="MLL Bloqueada ($)"><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="dias_calif_necesarios" label="Días Calif. p/Retiro" initialValue={5}><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="minimo_diario_calificante" label="Mín. Diario ($)" initialValue={150}><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="retiro_max_ciclo" label="Retiro Máx Ciclo ($)" initialValue={2000}><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="pct_max_retiro_ciclo" label="% Máx s/Ganancia" initialValue={0.5}><InputNumber style={{width:'100%'}} step={0.05} min={0} max={1}/></Form.Item></Col><Col span={8}><Form.Item name="ciclos_max" label="Ciclos Máx" initialValue={5}><InputNumber style={{width:'100%'}}/></Form.Item></Col></Row> <Row gutter={16}><Col span={8}><Form.Item name="split_trader" label="Split Trader" initialValue={0.9}><InputNumber style={{width:'100%'}} step={0.05} min={0} max={1}/></Form.Item></Col><Col span={8}><Form.Item name="dias_inactividad_max" label="Días Inactividad Máx" initialValue={30}><InputNumber style={{width:'100%'}}/></Form.Item></Col><Col span={8}><Form.Item name="verificado" label="Estado" initialValue={false}><Select><Select.Option value={false}>A verificar</Select.Option><Select.Option value={true}>Verificado</Select.Option></Select></Form.Item></Col></Row> <Form.Item name="notas" label="Notas"><Input.TextArea rows={2}/></Form.Item> <Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingProfile?'Actualizar':'Crear Perfil'}</Button><Button onClick={()=>{ setIsProfileModalVisible(false); setEditingProfile(null); }}>Cancelar</Button></Space></Form.Item> </Form> </Modal> </Content> </Layout> </Layout> {/* Modal Nueva Estrategia */}
 
 <Modal title="Nueva Estrategia Automatizada" open={isNewStrategyVisible} onCancel={() =>{ setIsNewStrategyVisible(false); newStrategyForm.resetFields(); setStrategyParams([{key:'',value:''}]); }} onOk={() => newStrategyForm.submit()} okText="Crear Estrategia" cancelText="Cancelar" width={680}> <Form form={newStrategyForm} layout="vertical" onFinish={handleNewStrategySubmit}> <Row gutter={16}> <Col span={12}><Form.Item name="name" label="Nombre de la estrategia" rules={[{required:true,message:'Requerido'}]}><Input placeholder="Ej. SuperTrendV34Strategy" /></Form.Item></Col> <Col span={12}><Form.Item name="phase" label="Fase" rules={[{required:true}]}><Select><Select.Option value="evaluacion"> Evaluación</Select.Option><Select.Option value="buffer1"> Buffer 1 - Agresiva</Select.Option><Select.Option value="buffer2"> Buffer 2 - Conservadora</Select.Option><Select.Option value="retiros"> Retiros recurrentes</Select.Option></Select></Form.Item></Col> </Row> <Row gutter={16}> <Col span={12}><Form.Item name="platform" label="Plataforma" initialValue="NinjaTrader8"><Select><Select.Option value="NinjaTrader8"> NinjaTrader 8</Select.Option><Select.Option value="MT5"> MetaTrader 5</Select.Option><Select.Option value="MT4"> MetaTrader 4</Select.Option><Select.Option value="Otro"> Otro</Select.Option></Select></Form.Item></Col> <Col span={12}><Form.Item name="instrument" label="Instrumento" initialValue="MNQ"><Select><Select.Option value="MNQ"> MNQ</Select.Option><Select.Option value="ES"> ES</Select.Option><Select.Option value="NQ"> NQ</Select.Option><Select.Option value="Otro"> Otro</Select.Option></Select></Form.Item></Col> </Row> <Form.Item name="description" label="Descripción"><Input.TextArea rows={2} placeholder="Breve descripción de la estrategia..." /></Form.Item> {/* Parámetros dinámicos */}
  <div style={{marginBottom:8,fontWeight:500,fontSize:13}}>Parametros de configuración</div> {strategyParams.map((p, idx) =>(
