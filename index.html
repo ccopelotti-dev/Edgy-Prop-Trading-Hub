@@ -1562,7 +1562,7 @@
  const { data: userData } = await supabase.auth.getUser();
  const email = (userData && userData.user && userData.user.email || '').toLowerCase();
  if (email && SSO_ALLOWED_EMAILS.includes(email)) {
- setCurrentUser({ email, username: email.split('@')[0], role: 'admin' });
+ setCurrentUser({ id: userData.user.id, email, username: email.split('@')[0], role: 'admin' });
  setIsAuthenticated(true);
  } else if (email) {
  await supabase.auth.signOut();
@@ -2659,7 +2659,7 @@
  }
  const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
  if (!error && data && data.user) {
- setCurrentUser({ email: cleanEmail, username: cleanEmail.split('@')[0], role: 'admin' });
+ setCurrentUser({ id: data.user.id, email: cleanEmail, username: cleanEmail.split('@')[0], role: 'admin' });
  setIsAuthenticated(true); setLoginError(false);
  message.success(`Bienvenido ${cleanEmail}.`);
  } else { setLoginError(true); message.error('Usuario o contraseña incorrectos'); }
