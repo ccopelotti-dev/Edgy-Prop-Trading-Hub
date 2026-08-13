@@ -3261,18 +3261,27 @@
  items={[
  { key: 'dashboard', icon: DashboardOutlined && <DashboardOutlined />, label: 'Dashboard' },
  { key: 'agenda', icon: CalendarOutlined && <CalendarOutlined />, label: 'Mi Agenda' },
- { key: 'salud', icon: MedicineBoxOutlined && <MedicineBoxOutlined />, label: 'Personal / Salud' },
+ { type: 'divider' },
+ { key: 'personal_hub', icon: HeartOutlined && <HeartOutlined />, label: 'Personal', children: [
+ { key: 'salud', icon: MedicineBoxOutlined && <MedicineBoxOutlined />, label: 'Salud' }
+ ] },
+ { key: 'trading_hub', icon: LineChartOutlined && <LineChartOutlined />, label: 'Trading Hub', children: [
  { key: 'prop_trading_futures', icon: LineChartOutlined && <LineChartOutlined />, label: 'Prop Trading Futures' },
  { key: 'prop_trading_cfd', icon: DashboardOutlined && <DashboardOutlined />, label: 'Prop Trading CFD' },
  { key: '2', icon: LineChartOutlined && <LineChartOutlined />, label: 'Análisis de Trading' },
  { key: '3', icon: BankOutlined && <BankOutlined />, label: 'Cuentas' },
  { key: 'perfiles', icon: FileProtectOutlined && <FileProtectOutlined />, label: 'Empresas y Reglas' },
  { key: 'microcontabilidad', icon: WalletOutlined && <WalletOutlined />, label: 'Microcontabilidad' },
- { key: 'estrategias', icon: RobotOutlined && <RobotOutlined />, label: 'Estrategias Automatizadas' },
+ { key: 'estrategias', icon: RobotOutlined && <RobotOutlined />, label: 'Estrategias Automatizadas' }
+ ] },
  { type: 'divider' },
  { key: 'configuracion', icon: UserOutlined && <UserOutlined />, label: 'Configuración' },
  { type: 'divider' },
  { key: 'logout', icon: LogoutOutlined && <LogoutOutlined />, label: 'Cerrar Sesión', danger: true }
+ ]}
+ defaultOpenKeys={[
+ ...(['prop_trading_futures','prop_trading_cfd','2','3','perfiles','microcontabilidad','estrategias'].includes(activeMenu) ? ['trading_hub'] : []),
+ ...(['salud'].includes(activeMenu) ? ['personal_hub'] : [])
  ]}
  onClick={({ key }) =>{
  if (key === 'logout') { supabase.auth.signOut(); setIsAuthenticated(false); setCurrentUser(null); message.info('Sesión cerrada.'); }
