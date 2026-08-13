@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<html lang="es"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title> Personal Hub</title> <link rel="manifest" href="manifest.json"> <meta name="theme-color" content="#1e4fd8"> <link rel="apple-touch-icon" href="apple-touch-icon.png"> <meta name="apple-mobile-web-app-capable" content="yes"> <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"> <meta name="apple-mobile-web-app-title" content="Personal Hub"> <link rel="icon" href="icon-192.png" type="image/png"> <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script> <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script> <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script> <script src="https://unpkg.com/dayjs@1.11.21/dayjs.min.js"></script> <link href="https://unpkg.com/antd@5.29.3/dist/reset.css" rel="stylesheet" /> <script src="https://unpkg.com/antd@5.29.3/dist/antd.min.js"></script> <script src="https://unpkg.com/@ant-design/icons@5.6.1/dist/index.umd.js"></script> <script src="https://unpkg.com/@supabase/supabase-js@2"></script> <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script> <style> body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; } .journal-row-pendiente > td { background: rgba(250, 173, 20, 0.13) !important; }
+<html lang="es"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title> Personal Hub</title> <link rel="manifest" href="manifest.json"> <meta name="theme-color" content="#1e4fd8"> <link rel="apple-touch-icon" href="apple-touch-icon.png"> <meta name="apple-mobile-web-app-capable" content="yes"> <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"> <meta name="apple-mobile-web-app-title" content="Personal Hub"> <link rel="icon" href="icon-192.png" type="image/png"> <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script> <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script> <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script> <script src="https://unpkg.com/dayjs@1.11.21/dayjs.min.js"></script> <link href="https://unpkg.com/antd@5.29.3/dist/reset.css" rel="stylesheet" /> <script src="https://unpkg.com/antd@5.29.3/dist/antd.min.js"></script> <script src="https://unpkg.com/@ant-design/icons@5.6.1/dist/index.umd.js"></script> <script src="https://unpkg.com/@supabase/supabase-js@2"></script> <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script> <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script> <style> body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; } .journal-row-pendiente > td { background: rgba(250, 173, 20, 0.13) !important; }
+ .historia-doc h1 { font-size: 22px; margin: 0 0 12px; color: #1e4fd8; } .historia-doc h2 { font-size: 18px; margin: 24px 0 10px; color: #1e4fd8; border-bottom: 1px solid #f0f0f0; padding-bottom: 6px; } .historia-doc h3 { font-size: 15px; margin: 16px 0 8px; } .historia-doc p { line-height: 1.6; margin: 0 0 10px; } .historia-doc ul, .historia-doc ol { margin: 0 0 10px; padding-left: 22px; line-height: 1.6; } .historia-doc li { margin-bottom: 4px; } .historia-doc table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 13px; } .historia-doc th, .historia-doc td { border: 1px solid #eee; padding: 6px 10px; text-align: left; vertical-align: top; } .historia-doc th { background: #fafafa; } .historia-doc hr { border: none; border-top: 1px solid #f0f0f0; margin: 18px 0; } .historia-doc code { background: #f5f5f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
  .logo { height: 32px; margin: 16px; background: rgba(255,255,255,0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 16px; letter-spacing: 1px; }
  .site-layout .site-layout-background { background: #f0f2f5; }
  .card-icon { font-size: 24px; padding: 12px; border-radius: 8px; }
@@ -1929,6 +1930,52 @@
  return items.filter(i => i.fecha).sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
  }, [saludConsultas, saludTurnos, saludMedicacion]);
 
+ // -- Salud: Historia Clínica -- documento único, editable ------------
+ // Vive en una sola fila (id=1) en salud_historia_clinica. Es el lugar
+ // canónico donde Carlos escribe/pega su historia clínica en Markdown;
+ // reemplaza tener el documento repartido entre un chat aparte y la app.
+ const [historiaDoc, setHistoriaDoc] = React.useState('');
+ const [historiaDocOriginal, setHistoriaDocOriginal] = React.useState('');
+ const [historiaDocLoading, setHistoriaDocLoading] = React.useState(true);
+ const [historiaDocSaving, setHistoriaDocSaving] = React.useState(false);
+ const [historiaDocEditMode, setHistoriaDocEditMode] = React.useState(false);
+ const [historiaDocUpdatedAt, setHistoriaDocUpdatedAt] = React.useState(null);
+
+ const fetchHistoriaDoc = async () =>{
+ setHistoriaDocLoading(true);
+ const { data, error } = await supabase.from('salud_historia_clinica').select('*').eq('id', 1).maybeSingle();
+ if (!error && data) {
+ setHistoriaDoc(data.contenido || '');
+ setHistoriaDocOriginal(data.contenido || '');
+ setHistoriaDocUpdatedAt(data.updated_at);
+ }
+ setHistoriaDocLoading(false);
+ };
+ const guardarHistoriaDoc = async () =>{
+ setHistoriaDocSaving(true);
+ try{
+ // Igual que en el fix de branding de Edgy Gestión: con .select() se
+ // puede distinguir un guardado real de uno que RLS frenó en
+ // silencio (acá no debería pasar nunca con un solo usuario, pero
+ // el chequeo no cuesta nada y avisa si algo raro pasa con la sesión).
+ const { data, error } = await supabase.from('salud_historia_clinica')
+ .upsert({ id: 1, contenido: historiaDoc, updated_at: new Date().toISOString() })
+ .select('id, updated_at');
+ if (error) throw error;
+ if (!data || data.length === 0) throw new Error('No se guardó (revisá la sesión).');
+ setHistoriaDocOriginal(historiaDoc);
+ setHistoriaDocUpdatedAt(data[0].updated_at);
+ setHistoriaDocEditMode(false);
+ message.success('Historia clínica guardada.');
+ }catch(err){ message.error('Error al guardar: ' + err.message); }
+ finally{ setHistoriaDocSaving(false); }
+ };
+ const historiaDocDirty = historiaDoc !== historiaDocOriginal;
+ const historiaDocHtml = React.useMemo(() =>{
+ try { return typeof marked !== 'undefined' ? marked.parse(historiaDoc || '') : (historiaDoc || '').replace(/\n/g, '<br/>'); }
+ catch(e) { return (historiaDoc || '').replace(/\n/g, '<br/>'); }
+ }, [historiaDoc]);
+
  const [transactions, setTransactions] = React.useState([]);
  const [activeMenu, setActiveMenu] = React.useState('dashboard');
 
@@ -2577,6 +2624,7 @@
  fetchSaludConsultas();
  fetchSaludMedicacion();
  fetchSaludTurnos();
+ fetchHistoriaDoc();
  refreshPushStatus();
  }
  }, [isAuthenticated, currentUser]);
@@ -3413,12 +3461,29 @@
  </Card>
  )},
  { key: 'historia', label: 'Historia Clínica', children: (
- <Card className="premium-card">
+ <>
+ <Card className="premium-card" style={{marginBottom:16}}
+ title={<span>Documento{historiaDocUpdatedAt && <span style={{fontWeight:400,fontSize:12,color:'#888',marginLeft:8}}>Última actualización: {dayjs(historiaDocUpdatedAt).format('DD/MM/YYYY HH:mm')}</span>}</span>}
+ extra={historiaDocEditMode
+ ? <Space><Button size="small" onClick={() =>{ setHistoriaDoc(historiaDocOriginal); setHistoriaDocEditMode(false); }}>Cancelar</Button><Button size="small" type="primary" loading={historiaDocSaving} disabled={!historiaDocDirty} onClick={guardarHistoriaDoc}>Guardar</Button></Space>
+ : <Button size="small" icon={EditOutlined && <EditOutlined />} onClick={() => setHistoriaDocEditMode(true)}>Editar</Button>}>
+ {historiaDocLoading ? <div style={{textAlign:'center',padding:24,color:'#999'}}>Cargando...</div> :
+ historiaDocEditMode ? (
+ <Input.TextArea value={historiaDoc} onChange={e => setHistoriaDoc(e.target.value)} autoSize={{minRows:16,maxRows:60}} style={{fontFamily:'monospace',fontSize:13}} placeholder="Pegá o escribí acá tu historia clínica en Markdown..." />
+ ) : (
+ historiaDoc
+ ? <div className="historia-doc" dangerouslySetInnerHTML={{ __html: historiaDocHtml }} />
+ : <Empty description="Sin documento cargado todavía. Tocá Editar para empezar." />
+ )}
+ </Card>
+ <Card className="premium-card" title={<span>Línea de tiempo automática</span>}>
+ <Text type="secondary" style={{fontSize:12,display:'block',marginBottom:12}}>Se arma sola con lo que cargues en Consultas, Medicación y Turnos/Estudios.</Text>
  {historiaClinicaItems.length === 0 ? <Empty description="Todavía no hay eventos registrados" /> :
  <Timeline items={historiaClinicaItems.map((it, idx) =>({ key: idx, color: it.color, children: (
  <div><div style={{fontWeight:600}}>{it.titulo}</div><div style={{fontSize:12,color:'#888'}}>{dayjs(it.fecha).format('DD/MM/YYYY')}</div>{it.detalle && <div style={{fontSize:13,marginTop:2}}>{it.detalle}</div>}</div>
  )}))} />}
  </Card>
+ </>
  )}
  ]} />
 </div>
