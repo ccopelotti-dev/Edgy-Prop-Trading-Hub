@@ -1751,7 +1751,7 @@
  return outputArray;
  };
 
- const [saludActiveTab, setSaludActiveTab] = React.useState('consultas');
+ const [saludActiveTab, setSaludActiveTab] = React.useState('seguimiento');
  const [pushStatus, setPushStatus] = React.useState('unknown'); // unknown | subscribed | unsubscribed | unsupported
  const [pushLoading, setPushLoading] = React.useState(false);
 
@@ -1920,6 +1920,190 @@
  const { error } = await supabase.from('salud_turnos_estudios').update({ estado: nuevoEstado }).eq('id', record.id);
  if (!error) fetchSaludTurnos();
  };
+
+ // -- Salud: Seguimiento diario (22/08, a pedido de Carlos) -----------
+ // Portea el artefacto "Check Diario de Tratamiento" (medicación +
+ // sesiones de Radio/Quimio) a Supabase, y suma Presión Arterial.
+ // Reutiliza salud_medicacion tal cual está: los medicamentos con
+ // horarios cargados son "de horario fijo"; los que tienen horarios
+ // vacío son PRN -- si además tienen max_diario, se muestran con
+ // contador (+/-), si no, como check simple (Reliverán, Buche mágico).
+ const seguimientoFecha = dayjs().format('YYYY-MM-DD');
+ const [medTomasHoy, setMedTomasHoy] = React.useState([]);
+ const [tratamientos, setTratamientos] = React.useState([]);
+ const [presionHoy, setPresionHoy] = React.useState([]);
+ const [presionHistorial, setPresionHistorial] = React.useState([]);
+ const [isPresionModalVisible, setIsPresionModalVisible] = React.useState(false);
+ const [presionMomentoEditando, setPresionMomentoEditando] = React.useState(null);
+ const [presionForm] = Form.useForm();
+ const presionChartRef = React.useRef(null);
+ const presionChartInstance = React.useRef(null);
+ const MOMENTOS_PA = ['Mañana', 'Tarde', 'Noche'];
+
+ const fetchMedTomasHoy = async () =>{
+ const { data, error } = await supabase.from('salud_medicacion_tomas').select('*').eq('fecha', seguimientoFecha);
+ if (!error && data) setMedTomasHoy(data);
+ };
+ const fetchTratamientos = async () =>{
+ const { data, error } = await supabase.from('salud_tratamientos').select('*, salud_tratamiento_sesiones(id, fecha)').eq('activo', true).order('id');
+ if (!error && data) setTratamientos(data);
+ };
+ const fetchPresionHoy = async () =>{
+ const { data, error } = await supabase.from('salud_presion_arterial').select('*').eq('fecha', seguimientoFecha);
+ if (!error && data) setPresionHoy(data);
+ };
+ const fetchPresionHistorial = async () =>{
+ const desde = dayjs().subtract(21, 'day').format('YYYY-MM-DD');
+ const { data, error } = await supabase.from('salud_presion_arterial').select('*').gte('fecha', desde).order('fecha').order('momento');
+ if (!error && data) setPresionHistorial(data);
+ };
+
+ const medicacionHorarioFijo = React.useMemo(() =>{
+ const filas = [];
+ saludMedicacion.filter(m => m.activo).forEach(m => (m.horarios || []).forEach(h => filas.push({ med: m, horario: String(h).slice(0,5) })));
+ return filas.sort((a,b) => a.horario.localeCompare(b.horario));
+ }, [saludMedicacion]);
+ const medicacionPrn = React.useMemo(() => saludMedicacion.filter(m => m.activo && (!m.horarios || m.horarios.length === 0)), [saludMedicacion]);
+
+ const tomaDeHorario = (medId, horario) => medTomasHoy.find(t => t.medicacion_id === medId && t.hora && t.hora.slice(0,5) === horario);
+ const tomaSimplePrn = (medId) => medTomasHoy.find(t => t.medicacion_id === medId && !t.hora);
+ const contadorPrn = (medId) => medTomasHoy.filter(t => t.medicacion_id === medId && !t.hora).length;
+
+ const toggleTomaHorario = async (med, horario) =>{
+ const existente = tomaDeHorario(med.id, horario);
+ if (existente) await supabase.from('salud_medicacion_tomas').delete().eq('id', existente.id);
+ else await supabase.from('salud_medicacion_tomas').insert([{ medicacion_id: med.id, fecha: seguimientoFecha, hora: horario }]);
+ fetchMedTomasHoy();
+ fetchHistorialTomas();
+ };
+ const togglePrnSimple = async (med) =>{
+ const existente = tomaSimplePrn(med.id);
+ if (existente) await supabase.from('salud_medicacion_tomas').delete().eq('id', existente.id);
+ else await supabase.from('salud_medicacion_tomas').insert([{ medicacion_id: med.id, fecha: seguimientoFecha, hora: null }]);
+ fetchMedTomasHoy();
+ };
+ const sumarContadorPrn = async (med) =>{
+ if (med.max_diario && contadorPrn(med.id) >= med.max_diario) return;
+ await supabase.from('salud_medicacion_tomas').insert([{ medicacion_id: med.id, fecha: seguimientoFecha, hora: null }]);
+ fetchMedTomasHoy();
+ };
+ const restarContadorPrn = async (med) =>{
+ const filas = medTomasHoy.filter(t => t.medicacion_id === med.id && !t.hora).sort((a,b) => b.id - a.id);
+ if (filas.length === 0) return;
+ await supabase.from('salud_medicacion_tomas').delete().eq('id', filas[0].id);
+ fetchMedTomasHoy();
+ };
+
+ const marcarSesionTratamiento = async (trat) =>{
+ const sesiones = trat.salud_tratamiento_sesiones || [];
+ const yaHoy = sesiones.some(s => s.fecha === seguimientoFecha);
+ if (yaHoy || sesiones.length >= trat.sesiones_totales) return;
+ const { error } = await supabase.from('salud_tratamiento_sesiones').insert([{ tratamiento_id: trat.id, fecha: seguimientoFecha }]);
+ if (error) { message.error('No se pudo registrar la sesión: ' + error.message); return; }
+ const nuevoTotal = sesiones.length + 1;
+ const nuevoEstado = nuevoTotal >= trat.sesiones_totales ? 'completado' : 'en_curso';
+ if (nuevoEstado !== trat.estado) await supabase.from('salud_tratamientos').update({ estado: nuevoEstado }).eq('id', trat.id);
+ message.success('Sesión de ' + trat.nombre + ' registrada.');
+ fetchTratamientos();
+ };
+
+ const abrirPresionModal = (momento) =>{
+ setPresionMomentoEditando(momento);
+ const existente = presionHoy.find(p => p.momento === momento);
+ presionForm.resetFields();
+ if (existente) presionForm.setFieldsValue(existente);
+ setIsPresionModalVisible(true);
+ };
+ const handlePresionSubmit = async (values) =>{
+ const payload = { fecha: seguimientoFecha, momento: presionMomentoEditando, hora: dayjs().format('HH:mm'), sistolica: values.sistolica, diastolica: values.diastolica, pulso: values.pulso || null, notas: values.notas || null };
+ try{
+ const { error } = await supabase.from('salud_presion_arterial').upsert(payload, { onConflict: 'fecha,momento' });
+ if (error) throw error;
+ message.success('Presión arterial registrada.');
+ setIsPresionModalVisible(false);
+ fetchPresionHoy();
+ fetchPresionHistorial();
+ }catch(err){ message.error('Error: ' + err.message); }
+ };
+
+ React.useEffect(() =>{
+ if (!presionChartRef.current || presionHistorial.length === 0) return;
+ if (presionChartInstance.current) { presionChartInstance.current.destroy(); presionChartInstance.current = null; }
+ const porFecha = {};
+ presionHistorial.forEach(p =>{ (porFecha[p.fecha] = porFecha[p.fecha] || []).push(p); });
+ const fechas = Object.keys(porFecha).sort();
+ const labels = fechas.map(f => dayjs(f).format('DD/MM'));
+ const sistolicas = fechas.map(f => Math.round(porFecha[f].reduce((s,p) => s+p.sistolica,0) / porFecha[f].length));
+ const diastolicas = fechas.map(f => Math.round(porFecha[f].reduce((s,p) => s+p.diastolica,0) / porFecha[f].length));
+ presionChartInstance.current = new window.Chart(presionChartRef.current, {
+ type: 'line',
+ data: { labels, datasets: [
+ { label: 'Sistólica', data: sistolicas, borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.1)', tension: 0.3 },
+ { label: 'Diastólica', data: diastolicas, borderColor: '#c026d3', backgroundColor: 'rgba(192,38,211,0.1)', tension: 0.3 },
+ ]},
+ options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { y: { ticks: { font: { size: 10 } } }, x: { ticks: { font: { size: 9 } } } } }
+ });
+ }, [presionHistorial]);
+
+ // -- Salud: Historial de medicación (detección de olvidos) -----------
+ // Compara, día por día de los últimos 30, lo que correspondía tomar
+ // (horarios fijos de cada medicación, según su propio fecha_inicio/
+ // fecha_fin -- no el flag "activo" actual, para no reescribir el
+ // pasado si una medicación se pausó hoy) contra lo que efectivamente
+ // quedó marcado en salud_medicacion_tomas. Los PRN no entran acá --
+ // no hay un "correspondía" para algo que es según necesidad.
+ const [historialTomas, setHistorialTomas] = React.useState([]);
+ const fetchHistorialTomas = async () =>{
+ const desde = dayjs().subtract(29, 'day').format('YYYY-MM-DD');
+ const { data, error } = await supabase.from('salud_medicacion_tomas').select('*').gte('fecha', desde).not('hora', 'is', null);
+ if (!error && data) setHistorialTomas(data);
+ };
+
+ const historialDias = React.useMemo(() =>{
+ const dias = [];
+ for (let i = 0; i < 30; i++){
+ const d = dayjs().subtract(i, 'day').format('YYYY-MM-DD');
+ const esperadas = [];
+ saludMedicacion.forEach(m =>{
+ if (!m.horarios || m.horarios.length === 0) return;
+ if (m.fecha_inicio && m.fecha_inicio > d) return;
+ if (m.fecha_fin && m.fecha_fin < d) return;
+ m.horarios.forEach(h => esperadas.push({ medId: m.id, nombre: m.nombre, horario: String(h).slice(0,5) }));
+ });
+ if (esperadas.length === 0) continue;
+ const tomasDia = historialTomas.filter(t => t.fecha === d);
+ const faltantes = esperadas.filter(e => !tomasDia.some(t => t.medicacion_id === e.medId && t.hora.slice(0,5) === e.horario));
+ dias.push({ fecha: d, esperadas: esperadas.length, cumplidas: esperadas.length - faltantes.length, faltantes });
+ }
+ return dias;
+ }, [saludMedicacion, historialTomas]);
+
+ function calcularCumplimiento(dias){
+ const esp = dias.reduce((s,d) => s + d.esperadas, 0);
+ const cum = dias.reduce((s,d) => s + d.cumplidas, 0);
+ return esp === 0 ? null : Math.round((cum / esp) * 100);
+ }
+ const cumplimiento7 = React.useMemo(() => calcularCumplimiento(historialDias.filter(d => dayjs().diff(dayjs(d.fecha), 'day') < 7)), [historialDias]);
+ const cumplimiento30 = React.useMemo(() => calcularCumplimiento(historialDias), [historialDias]);
+ function colorCumplimiento(pct){ return pct === null ? '#8a93a3' : pct >= 90 ? '#22a55e' : pct >= 70 ? '#d9822b' : '#cf1322'; }
+
+ // -- Agenda: "Chequeos de salud de hoy" (22/08, a pedido de Carlos) --
+ // Lista calculada al vuelo a partir de los horarios de Salud -- NO
+ // son filas de calendar_tasks (esa tabla es para tareas de
+ // reunión/trading de verdad). Tocar un chequeo marca la toma/registro
+ // real en Salud, mismas funciones que usa la pestaña Seguimiento
+ // diario -- así ambas pantallas quedan siempre sincronizadas.
+ const chequeosSaludHoy = React.useMemo(() =>{
+ const items = [];
+ medicacionHorarioFijo.forEach(({med, horario}) =>{
+ items.push({ key: 'med_' + med.id + '_' + horario, label: med.nombre + (med.dosis ? ' -- ' + med.dosis : ''), horario, hecho: !!tomaDeHorario(med.id, horario), onToggle: () => toggleTomaHorario(med, horario) });
+ });
+ MOMENTOS_PA.forEach(momento =>{
+ const reg = presionHoy.find(p => p.momento === momento);
+ items.push({ key: 'pa_' + momento, label: 'Presión arterial -- ' + momento, horario: null, hecho: !!reg, onToggle: () => abrirPresionModal(momento) });
+ });
+ return items.sort((a,b) =>(a.horario||'99:99').localeCompare(b.horario||'99:99'));
+ }, [medicacionHorarioFijo, medTomasHoy, presionHoy]);
 
  // -- Salud: Historia Clínica -- timeline agregado de las 3 fuentes ---
  const historiaClinicaItems = React.useMemo(() =>{
@@ -2625,6 +2809,11 @@
  fetchSaludMedicacion();
  fetchSaludTurnos();
  fetchHistoriaDoc();
+ fetchMedTomasHoy();
+ fetchTratamientos();
+ fetchPresionHoy();
+ fetchPresionHistorial();
+ fetchHistorialTomas();
  refreshPushStatus();
  }
  }, [isAuthenticated, currentUser]);
@@ -3342,6 +3531,19 @@
  }}
  /> </Sider> <Layout className="site-layout" style={{ background: '#f5f7fa', marginLeft: isMobile ? 0 : undefined }}> <Header className="dashboard-header" style={{ display:'flex', alignItems:'center', gap:12 }}> <Button type="text" icon={<span style={{fontSize:20,lineHeight:1}}>☰</span>} onClick={() => setSiderCollapsed(!siderCollapsed)} style={{ display: isMobile ? 'inline-flex' : 'none' }} /> <Title level={4} style={{ margin: 0 }}> Panel Principal</Title> </Header> <Content style={{ margin: isMobile ? '12px 12px' : '24px 24px', overflow: 'initial' }}> {/* DASHBOARD */}
  <div style={{ display: activeMenu === 'agenda' ? 'block' : 'none' }}> <div style={{ display:'flex', flexWrap:'wrap', rowGap:12, justifyContent:'space-between', alignItems:'center', marginBottom: 24 }}> <div><Title level={2} style={{ marginBottom: 4 }}> Mi Agenda</Title><Text type="secondary" style={{ fontSize: 16 }}> Calendario personal y tareas pendientes.</Text></div> <Button type="primary" icon={PlusOutlined && <PlusOutlined />} onClick={() => openNewTaskModal(agendaSelectedDate)}> Nueva Tarea</Button> </div>
+{chequeosSaludHoy.length > 0 && (
+<Card className="premium-card" style={{marginBottom:16}} size="small" title={<Space>{HeartOutlined && <HeartOutlined style={{color:'#eb2f96'}} />}<span>Chequeos de salud de hoy</span></Space>}>
+ <div style={{display:'flex', flexWrap:'wrap', gap:8}}>
+ {chequeosSaludHoy.map(item =>(
+ <div key={item.key} onClick={item.onToggle} style={{display:'flex', alignItems:'center', gap:6, padding:'6px 10px', borderRadius:20, border: '1px solid ' + (item.hecho ? '#9fe3bb' : '#e6e9f0'), background: item.hecho ? '#eafbf0' : '#fafafa', cursor:'pointer'}}>
+ <Checkbox checked={item.hecho} onChange={item.onToggle} onClick={(e) => e.stopPropagation()} />
+ <span style={{fontSize:12.5, textDecoration: item.hecho ? 'line-through' : 'none', color: item.hecho ? '#6b7280' : '#1f2430'}}>{item.label}</span>
+ {item.horario && <span style={{fontSize:11, color:'#8a93a3'}}>{item.horario}</span>}
+ </div>
+ ))}
+ </div>
+</Card>
+)}
 <Row gutter={16}>
  <Col xs={24} lg={14}>
  <Card className="premium-card" bodyStyle={{padding:8}}>
@@ -3423,6 +3625,139 @@
  : <Button type="primary" icon={BellOutlined && <BellOutlined />} loading={pushLoading} disabled={pushStatus==='unsupported'} onClick={activarNotificaciones}>{pushStatus==='unsupported' ? 'Notificaciones no soportadas' : 'Activar notificaciones'}</Button>}
  </div>
  <Tabs activeKey={saludActiveTab} onChange={setSaludActiveTab} items={[
+ { key: 'seguimiento', label: 'Seguimiento diario', children: (
+ <>
+ <Card className="premium-card" style={{marginBottom:16}} title="Medicación de hoy">
+ <div style={{fontWeight:700, fontSize:12, color:'#888', textTransform:'uppercase', marginBottom:8}}>Horario fijo</div>
+ {medicacionHorarioFijo.length === 0 ? <Empty description="Sin medicación de horario fijo" /> : (
+ <div style={{display:'flex', flexDirection:'column', gap:8, marginBottom:20}}>
+ {medicacionHorarioFijo.map(({med, horario}) =>{
+ const marcada = !!tomaDeHorario(med.id, horario);
+ return (
+ <div key={med.id + '_' + horario} onClick={() => toggleTomaHorario(med, horario)} style={{display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:10, border: '1px solid ' + (marcada ? '#9fe3bb' : '#e6e9f0'), background: marcada ? '#eafbf0' : '#f7f9fc', cursor:'pointer'}}>
+ {CheckCircleOutlined && <CheckCircleOutlined style={{color: marcada ? '#22a55e' : '#c7cdd6', fontSize:18}} />}
+ <span style={{flex:1, textDecoration: marcada ? 'line-through' : 'none', color: marcada ? '#6b7280' : '#1f2430'}}>{med.nombre}{med.dosis ? ' -- ' + med.dosis : ''}</span>
+ <span style={{fontSize:12, color:'#8a93a3'}}>{horario} hs</span>
+ </div>
+ );
+ })}
+ </div>
+ )}
+ <div style={{fontWeight:700, fontSize:12, color:'#888', textTransform:'uppercase', marginBottom:8}}>Según necesidad (PRN)</div>
+ {medicacionPrn.length === 0 ? <Empty description="Sin medicación PRN" /> : (
+ <div style={{display:'flex', flexDirection:'column', gap:8}}>
+ {medicacionPrn.map(med => med.max_diario ? (
+ <div key={med.id} style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', borderRadius:10, border:'1px solid #e6e9f0', background:'#f7f9fc'}}>
+ <div>
+ <div>{med.nombre}{med.dosis ? ' -- ' + med.dosis : ''}</div>
+ {med.notas && <div style={{fontSize:11.5, color:'#8a93a3'}}>{med.notas}</div>}
+ </div>
+ <Space>
+ <Button size="small" shape="circle" onClick={() => restarContadorPrn(med)}>-</Button>
+ <span style={{fontWeight:700, minWidth:44, textAlign:'center', color: contadorPrn(med.id) >= med.max_diario ? '#d9822b' : '#14213d'}}>{contadorPrn(med.id)} / {med.max_diario}</span>
+ <Button size="small" shape="circle" onClick={() => sumarContadorPrn(med)} disabled={contadorPrn(med.id) >= med.max_diario}>+</Button>
+ </Space>
+ </div>
+ ) : (
+ <div key={med.id} onClick={() => togglePrnSimple(med)} style={{display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:10, border: '1px solid ' + (tomaSimplePrn(med.id) ? '#9fe3bb' : '#e6e9f0'), background: tomaSimplePrn(med.id) ? '#eafbf0' : '#f7f9fc', cursor:'pointer'}}>
+ {CheckCircleOutlined && <CheckCircleOutlined style={{color: tomaSimplePrn(med.id) ? '#22a55e' : '#c7cdd6', fontSize:18}} />}
+ <span>{med.nombre}{med.dosis ? ' -- ' + med.dosis : ''}{med.indicacion ? ' (' + med.indicacion + ')' : ''}</span>
+ </div>
+ ))}
+ </div>
+ )}
+ </Card>
+
+ <Card className="premium-card" style={{marginBottom:16}} title="Sesiones de tratamiento">
+ <Row gutter={16}>
+ {tratamientos.map(t =>{
+ const sesiones = t.salud_tratamiento_sesiones || [];
+ const yaHoy = sesiones.some(s => s.fecha === seguimientoFecha);
+ const percent = Math.min(100, (sesiones.length / t.sesiones_totales) * 100);
+ return (
+ <Col xs={24} sm={12} key={t.id} style={{marginBottom:16}}>
+ <div style={{border:'1px solid #e6e9f0', borderRadius:12, padding:16, height:'100%'}}>
+ <div style={{display:'flex', justifyContent:'space-between', marginBottom:8}}>
+ <span style={{fontWeight:700}}>{t.nombre}</span>
+ <span style={{color:'#6b7280', fontSize:13}}>{sesiones.length} / {t.sesiones_totales}</span>
+ </div>
+ <Progress percent={percent} showInfo={false} strokeColor={t.nombre === 'Radioterapia' ? '#2f6fed' : '#c026d3'} style={{marginBottom:10}} />
+ {t.estado === 'esperando_turno' ? (
+ <Tag color="orange">Esperando turno para comenzar</Tag>
+ ) : (
+ <Button size="small" type="primary" disabled={yaHoy || sesiones.length >= t.sesiones_totales} onClick={() => marcarSesionTratamiento(t)}>
+ {yaHoy ? 'Sesión de hoy ya marcada' : t.estado === 'completado' ? 'Tratamiento completado' : 'Marcar sesión de hoy'}
+ </Button>
+ )}
+ </div>
+ </Col>
+ );
+ })}
+ {tratamientos.length === 0 && <Empty description="Sin tratamientos cargados" />}
+ </Row>
+ </Card>
+
+ <Card className="premium-card" title="Presión arterial">
+ <Row gutter={16} style={{marginBottom:16}}>
+ {MOMENTOS_PA.map(momento =>{
+ const reg = presionHoy.find(p => p.momento === momento);
+ return (
+ <Col xs={24} sm={8} key={momento}>
+ <div onClick={() => abrirPresionModal(momento)} style={{border: '1px solid ' + (reg ? '#9fe3bb' : '#e6e9f0'), background: reg ? '#eafbf0' : '#f7f9fc', borderRadius:10, padding:'12px 14px', cursor:'pointer', textAlign:'center'}}>
+ <div style={{fontSize:12, color:'#8a93a3', textTransform:'uppercase'}}>{momento}</div>
+ {reg ? (
+ <div style={{fontSize:20, fontWeight:700, color:'#14213d'}}>{reg.sistolica}/{reg.diastolica}{reg.pulso ? <span style={{fontSize:12, color:'#8a93a3', fontWeight:400}}> · {reg.pulso} lpm</span> : null}</div>
+ ) : (
+ <div style={{fontSize:13, color:'#8a93a3', marginTop:6}}>Sin registrar -- tocar para cargar</div>
+ )}
+ </div>
+ </Col>
+ );
+ })}
+ </Row>
+ {presionHistorial.length > 0 && <div style={{height:220}}><canvas ref={presionChartRef}></canvas></div>}
+ <Text type="secondary" style={{fontSize:11.5, display:'block', marginTop:10}}>Avisos automáticos a las 8:00, 15:00 y 22:00 -- si ya cargaste la medición de ese momento, no vuelve a avisar.</Text>
+ </Card>
+
+ <Card className="premium-card" style={{marginTop:16}} title="Historial de medicación (últimos 30 días)">
+ <Space size={32} style={{marginBottom:16}}>
+ <div>
+ <div style={{fontSize:12, color:'#8a93a3'}}>Cumplimiento 7 días</div>
+ <div style={{fontSize:24, fontWeight:700, color: colorCumplimiento(cumplimiento7)}}>{cumplimiento7 === null ? '-' : cumplimiento7 + '%'}</div>
+ </div>
+ <div>
+ <div style={{fontSize:12, color:'#8a93a3'}}>Cumplimiento 30 días</div>
+ <div style={{fontSize:24, fontWeight:700, color: colorCumplimiento(cumplimiento30)}}>{cumplimiento30 === null ? '-' : cumplimiento30 + '%'}</div>
+ </div>
+ </Space>
+ {historialDias.length === 0 ? <Empty description="Todavía no hay historial suficiente" /> : (
+ <div style={{display:'flex', flexDirection:'column', gap:4, maxHeight:340, overflowY:'auto'}}>
+ {historialDias.map(d =>(
+ <div key={d.fecha} style={{display:'flex', alignItems:'center', gap:10, padding:'6px 10px', borderRadius:8, background: d.faltantes.length > 0 ? '#fff7e6' : '#f7f9fc'}}>
+ <span style={{fontSize:12, color:'#6b7280', width:92, flexShrink:0, textTransform:'capitalize'}}>{dayjs(d.fecha).format('ddd DD/MM')}</span>
+ <span style={{fontSize:12, fontWeight:700, color: d.faltantes.length > 0 ? '#d9822b' : '#22a55e', width:36, flexShrink:0}}>{d.cumplidas}/{d.esperadas}</span>
+ {d.faltantes.length > 0
+ ? <span style={{fontSize:12, color:'#8a5c00'}}>Faltó: {d.faltantes.map(f => f.nombre + ' ' + f.horario).join(', ')}</span>
+ : <span style={{fontSize:12, color:'#22a55e'}}>Completo</span>}
+ </div>
+ ))}
+ </div>
+ )}
+ </Card>
+
+ <Modal title={'Presión arterial -- ' + (presionMomentoEditando || '')} open={isPresionModalVisible} onCancel={() => setIsPresionModalVisible(false)} footer={null} destroyOnClose width={380}>
+ <Form form={presionForm} layout="vertical" onFinish={handlePresionSubmit}>
+ <Row gutter={12}>
+ <Col span={8}><Form.Item name="sistolica" label="Sistólica" rules={[{required:true}]}><InputNumber style={{width:'100%'}} min={50} max={260} /></Form.Item></Col>
+ <Col span={8}><Form.Item name="diastolica" label="Diastólica" rules={[{required:true}]}><InputNumber style={{width:'100%'}} min={30} max={180} /></Form.Item></Col>
+ <Col span={8}><Form.Item name="pulso" label="Pulso"><InputNumber style={{width:'100%'}} min={30} max={220} /></Form.Item></Col>
+ </Row>
+ <Form.Item name="notas" label="Notas"><Input.TextArea rows={2} /></Form.Item>
+ <Form.Item><Button type="primary" htmlType="submit" block>Guardar</Button></Form.Item>
+ </Form>
+ </Modal>
+ </>
+ )},
  { key: 'consultas', label: 'Consultas y diagnósticos', children: (
  <Card className="premium-card" extra={<Button type="primary" size="small" icon={PlusOutlined && <PlusOutlined />} onClick={openNewConsultaModal}>Nueva Consulta</Button>}>
  {saludConsultas.length === 0 ? <Empty description="Sin consultas cargadas" /> : <Table rowKey="id" scroll={{ x:'max-content' }} dataSource={saludConsultas} pagination={{ pageSize: 8 }} columns={[
