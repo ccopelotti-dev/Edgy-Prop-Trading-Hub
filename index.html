@@ -1875,6 +1875,15 @@
  const { error } = await supabase.from('salud_medicacion').update({ activo: !record.activo }).eq('id', record.id);
  if (!error) fetchSaludMedicacion();
  };
+ const [reponerStockRecord, setReponerStockRecord] = React.useState(null);
+ const [reponerStockForm] = Form.useForm();
+ const openReponerStock = (record) =>{ setReponerStockRecord(record); reponerStockForm.resetFields(); };
+ const handleReponerStockSubmit = async (values) =>{
+ const nuevoStock = (Number(reponerStockRecord.stock_actual) || 0) + Number(values.cantidad);
+ const { error } = await supabase.from('salud_medicacion').update({ stock_actual: nuevoStock }).eq('id', reponerStockRecord.id);
+ if (!error) { message.success('Stock actualizado.'); setReponerStockRecord(null); fetchSaludMedicacion(); }
+ else message.error('Error: ' + error.message);
+ };
 
  // -- Salud: Turnos y estudios (con archivos) -------------------------
  const [saludTurnos, setSaludTurnos] = React.useState([]);
@@ -3778,7 +3787,19 @@
  { title:'HORARIOS', dataIndex:'horarios', key:'horarios', render: v => (v||[]).map(h => String(h).slice(0,5)).join(', ') || '-' },
  { title:'DESDE', dataIndex:'fecha_inicio', key:'fecha_inicio', render: v => v ? dayjs(v).format('DD/MM/YYYY') : '-' },
  { title:'HASTA', dataIndex:'fecha_fin', key:'fecha_fin', render: v => v ? dayjs(v).format('DD/MM/YYYY') : 'Continúa' },
- { title:'', key:'acciones', render: (_, r) => <Space size={4}><Button size="small" type="link" onClick={() => toggleMedicacionActivo(r)}>{r.activo ? 'Pausar' : 'Reactivar'}</Button><Button size="small" type="link" onClick={() => openEditMedicacionModal(r)}>Editar</Button><Button size="small" type="link" danger onClick={() => handleDeleteMedicacion(r.id)}>Borrar</Button></Space> }
+ { title:'STOCK', key:'stock', render: (_, r) => {
+ if (r.stock_actual === null || r.stock_actual === undefined) return <span style={{color:'#999'}}>-</span>;
+ const consumoPorToma = Number(r.consumo_por_toma) || 1;
+ const consumoDiario = (r.horarios||[]).length > 0 ? r.horarios.length * consumoPorToma : null;
+ const diasRestantes = consumoDiario ? r.stock_actual / consumoDiario : null;
+ const bajo = diasRestantes !== null && diasRestantes <= (Number(r.alerta_stock_dias)||3);
+ return <span>
+ <span style={{color: bajo ? '#ff4d4f' : 'inherit', fontWeight: bajo ? 600 : 400}}>{r.stock_actual}{r.stock_unidad ? ' ' + r.stock_unidad : ''}</span>
+ {diasRestantes !== null && <span style={{color:'#999', marginLeft:4}}>(~{Math.floor(diasRestantes)}d)</span>}
+ {bajo && <Tag color="red" style={{marginLeft:6}}>Bajo</Tag>}
+ </span>;
+ } },
+ { title:'', key:'acciones', render: (_, r) => <Space size={4}><Button size="small" type="link" onClick={() => openReponerStock(r)}>Reponer</Button><Button size="small" type="link" onClick={() => toggleMedicacionActivo(r)}>{r.activo ? 'Pausar' : 'Reactivar'}</Button><Button size="small" type="link" onClick={() => openEditMedicacionModal(r)}>Editar</Button><Button size="small" type="link" danger onClick={() => handleDeleteMedicacion(r.id)}>Borrar</Button></Space> }
  ]} />}
  </Card>
  )},
@@ -4280,8 +4301,24 @@
 </Form.Item>
 <Row gutter={12}><Col span={12}><Form.Item name="fecha_inicio" label="Desde" rules={[{required:true}]}><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item></Col><Col span={12}><Form.Item name="fecha_fin" label="Hasta (opcional)"><DatePicker style={{width:'100%'}} format="DD/MM/YYYY"/></Form.Item></Col></Row>
 <Form.Item name="activo" label="Estado" initialValue={true}><Select options={[{value:true,label:'Activa'},{value:false,label:'Pausada'}]}/></Form.Item>
+<Card size="small" title="Stock (opcional)" style={{marginBottom:16}}>
+<Row gutter={12}>
+<Col span={12}><Form.Item name="stock_actual" label="Stock actual" tooltip="Cuántas unidades quedan. Vacío = sin seguimiento de stock para este medicamento."><InputNumber style={{width:'100%'}} min={0} placeholder="Ej. 30"/></Form.Item></Col>
+<Col span={12}><Form.Item name="stock_unidad" label="Unidad"><Input placeholder="Ej. comprimidos, ml"/></Form.Item></Col>
+</Row>
+<Row gutter={12}>
+<Col span={12}><Form.Item name="consumo_por_toma" label="Consumo por toma" initialValue={1} tooltip="Cuánto stock se descuenta cada vez que marcás una toma. Ej. 0.5 si la dosis es media pastilla, 10 si son 10 ml."><InputNumber style={{width:'100%'}} min={0} step={0.5}/></Form.Item></Col>
+<Col span={12}><Form.Item name="alerta_stock_dias" label="Avisar con (días)" initialValue={3} tooltip="Días de anticipación para el aviso de stock bajo."><InputNumber style={{width:'100%'}} min={1}/></Form.Item></Col>
+</Row>
+</Card>
 <Form.Item name="notas" label="Notas"><Input.TextArea rows={2}/></Form.Item>
 <Form.Item><Space wrap><Button type="primary" htmlType="submit">{editingMedicacion?'Actualizar':'Guardar Medicación'}</Button><Button onClick={()=>{ setIsMedicacionModalVisible(false); setEditingMedicacion(null); setMedHorarios([]); }}>Cancelar</Button>{editingMedicacion && <Button danger onClick={() =>{ handleDeleteMedicacion(editingMedicacion.id); setIsMedicacionModalVisible(false); setEditingMedicacion(null); setMedHorarios([]); }}>Eliminar</Button>}</Space></Form.Item>
+</Form>
+</Modal>
+<Modal title={`Reponer stock -- ${reponerStockRecord?.nombre || ''}`} open={!!reponerStockRecord} onCancel={() => setReponerStockRecord(null)} footer={null} destroyOnClose width={360}>
+<Form form={reponerStockForm} layout="vertical" onFinish={handleReponerStockSubmit}>
+<Form.Item name="cantidad" label={`Cantidad que sumás (stock actual: ${reponerStockRecord?.stock_actual ?? 0} ${reponerStockRecord?.stock_unidad || ''})`} rules={[{required:true}]}><InputNumber style={{width:'100%'}} min={0.5} step={0.5} autoFocus/></Form.Item>
+<Form.Item><Space><Button type="primary" htmlType="submit">Guardar</Button><Button onClick={() => setReponerStockRecord(null)}>Cancelar</Button></Space></Form.Item>
 </Form>
 </Modal>
 <Modal title={editingTurno ? 'Editar Turno/Estudio' : 'Nuevo Turno/Estudio'} open={isTurnoModalVisible} onCancel={() =>{ setIsTurnoModalVisible(false); setEditingTurno(null); setTurnoArchivos([]); }} footer={null} destroyOnClose width={480}>
