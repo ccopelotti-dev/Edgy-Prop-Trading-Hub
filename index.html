@@ -2067,19 +2067,61 @@
  React.useEffect(() =>{
  if (!presionChartRef.current || presionHistorial.length === 0) return;
  if (presionChartInstance.current) { presionChartInstance.current.destroy(); presionChartInstance.current = null; }
- const porFecha = {};
- presionHistorial.forEach(p =>{ (porFecha[p.fecha] = porFecha[p.fecha] || []).push(p); });
- const fechas = Object.keys(porFecha).sort();
- const labels = fechas.map(f => dayjs(f).format('DD/MM'));
- const sistolicas = fechas.map(f => Math.round(porFecha[f].reduce((s,p) => s+p.sistolica,0) / porFecha[f].length));
- const diastolicas = fechas.map(f => Math.round(porFecha[f].reduce((s,p) => s+p.diastolica,0) / porFecha[f].length));
+ // A pedido de Carlos (26/08): un punto por CADA toma real (no un
+ // promedio por día) -- ordenadas por fecha+hora efectiva de carga.
+ // La línea punteada vertical de cambio de día se dibuja a mano con un
+ // plugin local (Chart.js 4 no trae un eje de tiempo con adapter acá
+ // cargado, así que se simula sobre el eje de categorías existente
+ // usando el índice de cada punto).
+ const puntos = presionHistorial.slice().sort((a,b) =>{
+ const ha = a.hora || '00:00', hb = b.hora || '00:00';
+ return a.fecha === b.fecha ? ha.localeCompare(hb) : String(a.fecha).localeCompare(String(b.fecha));
+ });
+ const labels = puntos.map(p => (p.hora || '').slice(0,5));
+ const sistolicas = puntos.map(p => p.sistolica);
+ const diastolicas = puntos.map(p => p.diastolica);
+ const cambiosDeDia = [];
+ puntos.forEach((p, i) =>{ if (i === 0 || p.fecha !== puntos[i-1].fecha) cambiosDeDia.push({ index: i, fecha: p.fecha }); });
+
+ const lineaDiaPlugin = {
+ id: 'lineaDia',
+ afterDraw(chart){
+ const { ctx, chartArea, scales: { x } } = chart;
+ if (!chartArea) return;
+ ctx.save();
+ cambiosDeDia.forEach(({ index, fecha }) =>{
+ const xPos = x.getPixelForValue(index);
+ ctx.strokeStyle = '#d9d9d9';
+ ctx.lineWidth = 1;
+ ctx.setLineDash([4, 4]);
+ ctx.beginPath();
+ ctx.moveTo(xPos, chartArea.top);
+ ctx.lineTo(xPos, chartArea.bottom);
+ ctx.stroke();
+ ctx.setLineDash([]);
+ ctx.fillStyle = '#8a93a3';
+ ctx.font = '10px -apple-system, sans-serif';
+ ctx.fillText(dayjs(fecha).format('DD/MM'), xPos + 3, chartArea.top + 10);
+ });
+ ctx.restore();
+ }
+ };
+
  presionChartInstance.current = new window.Chart(presionChartRef.current, {
  type: 'line',
  data: { labels, datasets: [
- { label: 'Sistólica', data: sistolicas, borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.1)', tension: 0.3 },
- { label: 'Diastólica', data: diastolicas, borderColor: '#c026d3', backgroundColor: 'rgba(192,38,211,0.1)', tension: 0.3 },
+ { label: 'Sistólica', data: sistolicas, borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.1)', tension: 0.3, pointRadius: 3, pointHoverRadius: 5 },
+ { label: 'Diastólica', data: diastolicas, borderColor: '#c026d3', backgroundColor: 'rgba(192,38,211,0.1)', tension: 0.3, pointRadius: 3, pointHoverRadius: 5 },
  ]},
- options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { y: { ticks: { font: { size: 10 } } }, x: { ticks: { font: { size: 9 } } } } }
+ options: { responsive: true, maintainAspectRatio: false, plugins: {
+ legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+ tooltip: { callbacks: { title: (items) =>{
+ const p = puntos[items[0].dataIndex];
+ if (!p) return '';
+ return dayjs(p.fecha).format('DD/MM') + ' -- ' + (p.momento || '') + (p.hora ? ' (' + p.hora.slice(0,5) + ')' : '');
+ } } }
+ }, scales: { y: { ticks: { font: { size: 10 } } }, x: { ticks: { font: { size: 9 }, autoSkip: true, maxRotation: 0 }, title: { display: false } } } },
+ plugins: [lineaDiaPlugin]
  });
  }, [presionHistorial]);
 
