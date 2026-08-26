@@ -2031,6 +2031,7 @@
  estado_general: values.estado_general || null,
  cansancio: values.cansancio || null,
  nauseas: values.nauseas || false,
+ drogas_aplicadas: values.drogas_aplicadas || null,
  notas: values.notas || null,
  };
  const { error } = await supabase.from('salud_tratamiento_sesiones').insert([payload]);
@@ -3817,6 +3818,9 @@
  ]} />
  </Form.Item>
  <Form.Item name="nauseas" label="Náuseas" valuePropName="checked"><Switch /></Form.Item>
+ {sesionTratamientoEditando?.nombre === 'Quimioterapia' && (
+ <Form.Item name="drogas_aplicadas" label="Drogas aplicadas"><Input.TextArea rows={2} placeholder="Qué te aplicaron hoy" /></Form.Item>
+ )}
  <Form.Item name="notas" label="Notas (piel, dolor, lo que sea)"><Input.TextArea rows={2} placeholder="Opcional -- cualquier otra cosa que quieras dejar anotada" /></Form.Item>
  <Form.Item><Button type="primary" htmlType="submit" block>Guardar y marcar sesión</Button></Form.Item>
  </Form>
