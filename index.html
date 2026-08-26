@@ -19,7 +19,7 @@
  .metric-compare-neutral { color: #888; }
  </style>
 </head> <body> <div id="root"></div> <script type="text/babel"> try {
- const { Layout, Menu, Typography, Card, Row, Col, Table, Tag, Statistic, ConfigProvider, theme, Progress, Button, Modal, Form, Input, InputNumber, Space, message, Select, DatePicker, TimePicker, Tabs, Tooltip, Badge, Descriptions, Image, Calendar, Checkbox, Empty, Timeline } = antd;
+ const { Layout, Menu, Typography, Card, Row, Col, Table, Tag, Statistic, ConfigProvider, theme, Progress, Button, Modal, Form, Input, InputNumber, Space, message, Select, DatePicker, TimePicker, Tabs, Tooltip, Badge, Descriptions, Image, Calendar, Checkbox, Empty, Timeline, Radio, Switch } = antd;
  const { Header, Content, Sider } = Layout;
  const { Title, Text } = Typography;
 
@@ -2003,16 +2003,44 @@
  fetchMedTomasHoy();
  };
 
- const marcarSesionTratamiento = async (trat) =>{
+ // Antes insertaba la sesión directo al tocar el botón. Ahora, a pedido
+ // de Carlos, primero abre un modal (mismo patrón que Presión arterial)
+ // para dejar una data mínima del estado general al volver de la
+ // sesión -- así con el tiempo se puede ver si el cansancio/náuseas
+ // van variando sesión a sesión, no solo el conteo 1/35.
+ const [isSesionModalVisible, setIsSesionModalVisible] = React.useState(false);
+ const [sesionTratamientoEditando, setSesionTratamientoEditando] = React.useState(null);
+ const [sesionForm] = Form.useForm();
+
+ const abrirSesionModal = (trat) =>{
  const sesiones = trat.salud_tratamiento_sesiones || [];
  const yaHoy = sesiones.some(s => s.fecha === seguimientoFecha);
  if (yaHoy || sesiones.length >= trat.sesiones_totales) return;
- const { error } = await supabase.from('salud_tratamiento_sesiones').insert([{ tratamiento_id: trat.id, fecha: seguimientoFecha }]);
+ setSesionTratamientoEditando(trat);
+ sesionForm.resetFields();
+ setIsSesionModalVisible(true);
+ };
+
+ const handleSesionSubmit = async (values) =>{
+ const trat = sesionTratamientoEditando;
+ if (!trat) return;
+ const sesiones = trat.salud_tratamiento_sesiones || [];
+ const payload = {
+ tratamiento_id: trat.id,
+ fecha: seguimientoFecha,
+ estado_general: values.estado_general || null,
+ cansancio: values.cansancio || null,
+ nauseas: values.nauseas || false,
+ notas: values.notas || null,
+ };
+ const { error } = await supabase.from('salud_tratamiento_sesiones').insert([payload]);
  if (error) { message.error('No se pudo registrar la sesión: ' + error.message); return; }
  const nuevoTotal = sesiones.length + 1;
  const nuevoEstado = nuevoTotal >= trat.sesiones_totales ? 'completado' : 'en_curso';
  if (nuevoEstado !== trat.estado) await supabase.from('salud_tratamientos').update({ estado: nuevoEstado }).eq('id', trat.id);
  message.success('Sesión de ' + trat.nombre + ' registrada.');
+ setIsSesionModalVisible(false);
+ setSesionTratamientoEditando(null);
  fetchTratamientos();
  };
 
@@ -3683,6 +3711,11 @@
  const sesiones = t.salud_tratamiento_sesiones || [];
  const yaHoy = sesiones.some(s => s.fecha === seguimientoFecha);
  const percent = Math.min(100, (sesiones.length / t.sesiones_totales) * 100);
+ // Si ya se cargó una fecha de inicio (turno confirmado), el "esperando
+ // turno" se levanta solo el día que llega -- no hace falta que alguien
+ // entre a cambiar el estado a mano. Sin fecha_inicio cargada, se queda
+ // esperando como antes.
+ const esperandoTurno = t.estado === 'esperando_turno' && (!t.fecha_inicio || seguimientoFecha < t.fecha_inicio);
  return (
  <Col xs={24} sm={12} key={t.id} style={{marginBottom:16}}>
  <div style={{border:'1px solid #e6e9f0', borderRadius:12, padding:16, height:'100%'}}>
@@ -3691,10 +3724,10 @@
  <span style={{color:'#6b7280', fontSize:13}}>{sesiones.length} / {t.sesiones_totales}</span>
  </div>
  <Progress percent={percent} showInfo={false} strokeColor={t.nombre === 'Radioterapia' ? '#2f6fed' : '#c026d3'} style={{marginBottom:10}} />
- {t.estado === 'esperando_turno' ? (
- <Tag color="orange">Esperando turno para comenzar</Tag>
+ {esperandoTurno ? (
+ <Tag color="orange">{t.fecha_inicio ? 'Esperando turno -- arranca ' + dayjs(t.fecha_inicio).format('DD/MM') : 'Esperando turno para comenzar'}</Tag>
  ) : (
- <Button size="small" type="primary" disabled={yaHoy || sesiones.length >= t.sesiones_totales} onClick={() => marcarSesionTratamiento(t)}>
+ <Button size="small" type="primary" disabled={yaHoy || sesiones.length >= t.sesiones_totales} onClick={() => abrirSesionModal(t)}>
  {yaHoy ? 'Sesión de hoy ya marcada' : t.estado === 'completado' ? 'Tratamiento completado' : 'Marcar sesión de hoy'}
  </Button>
  )}
@@ -3763,6 +3796,29 @@
  </Row>
  <Form.Item name="notas" label="Notas"><Input.TextArea rows={2} /></Form.Item>
  <Form.Item><Button type="primary" htmlType="submit" block>Guardar</Button></Form.Item>
+ </Form>
+ </Modal>
+
+ <Modal title={'Sesión de ' + (sesionTratamientoEditando?.nombre || '') + ' -- ¿cómo llegaste?'} open={isSesionModalVisible} onCancel={() =>{ setIsSesionModalVisible(false); setSesionTratamientoEditando(null); }} footer={null} destroyOnClose width={400}>
+ <Form form={sesionForm} layout="vertical" onFinish={handleSesionSubmit}>
+ <Form.Item name="estado_general" label="Estado general">
+ <Radio.Group optionType="button" buttonStyle="solid" options={[
+ { label: 'Bien', value: 'bien' },
+ { label: 'Regular', value: 'regular' },
+ { label: 'Mal', value: 'mal' },
+ ]} />
+ </Form.Item>
+ <Form.Item name="cansancio" label="Cansancio">
+ <Radio.Group optionType="button" buttonStyle="solid" options={[
+ { label: 'Nada', value: 'nada' },
+ { label: 'Leve', value: 'leve' },
+ { label: 'Moderado', value: 'moderado' },
+ { label: 'Mucho', value: 'mucho' },
+ ]} />
+ </Form.Item>
+ <Form.Item name="nauseas" label="Náuseas" valuePropName="checked"><Switch /></Form.Item>
+ <Form.Item name="notas" label="Notas (piel, dolor, lo que sea)"><Input.TextArea rows={2} placeholder="Opcional -- cualquier otra cosa que quieras dejar anotada" /></Form.Item>
+ <Form.Item><Button type="primary" htmlType="submit" block>Guardar y marcar sesión</Button></Form.Item>
  </Form>
  </Modal>
  </>
