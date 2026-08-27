@@ -1948,6 +1948,12 @@
  const presionChartRef = React.useRef(null);
  const presionChartInstance = React.useRef(null);
  const MOMENTOS_PA = ['Mañana', 'Tarde', 'Noche'];
+ const [pesoHoy, setPesoHoy] = React.useState(null);
+ const [pesoHistorial, setPesoHistorial] = React.useState([]);
+ const [isPesoModalVisible, setIsPesoModalVisible] = React.useState(false);
+ const [pesoForm] = Form.useForm();
+ const pesoChartRef = React.useRef(null);
+ const pesoChartInstance = React.useRef(null);
 
  const fetchMedTomasHoy = async () =>{
  const { data, error } = await supabase.from('salud_medicacion_tomas').select('*').eq('fecha', seguimientoFecha);
@@ -1965,6 +1971,15 @@
  const desde = dayjs().subtract(21, 'day').format('YYYY-MM-DD');
  const { data, error } = await supabase.from('salud_presion_arterial').select('*').gte('fecha', desde).order('fecha').order('momento');
  if (!error && data) setPresionHistorial(data);
+ };
+ const fetchPesoHoy = async () =>{
+ const { data, error } = await supabase.from('salud_peso').select('*').eq('fecha', seguimientoFecha).maybeSingle();
+ if (!error) setPesoHoy(data || null);
+ };
+ const fetchPesoHistorial = async () =>{
+ const desde = dayjs().subtract(60, 'day').format('YYYY-MM-DD');
+ const { data, error } = await supabase.from('salud_peso').select('*').gte('fecha', desde).order('fecha');
+ if (!error && data) setPesoHistorial(data);
  };
 
  const medicacionHorarioFijo = React.useMemo(() =>{
@@ -2063,6 +2078,46 @@
  fetchPresionHistorial();
  }catch(err){ message.error('Error: ' + err.message); }
  };
+
+ const abrirPesoModal = () =>{
+ pesoForm.resetFields();
+ if (pesoHoy) pesoForm.setFieldsValue(pesoHoy);
+ setIsPesoModalVisible(true);
+ };
+ const handlePesoSubmit = async (values) =>{
+ const payload = { fecha: seguimientoFecha, peso_kg: values.peso_kg, notas: values.notas || null };
+ try{
+ const { error } = await supabase.from('salud_peso').upsert(payload, { onConflict: 'fecha' });
+ if (error) throw error;
+ message.success('Peso registrado.');
+ setIsPesoModalVisible(false);
+ fetchPesoHoy();
+ fetchPesoHistorial();
+ }catch(err){ message.error('Error: ' + err.message); }
+ };
+
+ React.useEffect(() =>{
+ if (!pesoChartRef.current || pesoHistorial.length === 0) return;
+ if (pesoChartInstance.current) { pesoChartInstance.current.destroy(); pesoChartInstance.current = null; }
+ // Un solo registro por día -- a diferencia de la presión arterial acá
+ // no hace falta la línea de "cambio de día", cada punto del eje X ya
+ // es un día distinto.
+ const labels = pesoHistorial.map(p => dayjs(p.fecha).format('DD/MM'));
+ const pesos = pesoHistorial.map(p => p.peso_kg);
+ pesoChartInstance.current = new window.Chart(pesoChartRef.current, {
+ type: 'line',
+ data: { labels, datasets: [
+ { label: 'Peso (kg)', data: pesos, borderColor: '#22a55e', backgroundColor: 'rgba(34,165,94,0.1)', tension: 0.3, pointRadius: 3, pointHoverRadius: 5 },
+ ]},
+ options: { responsive: true, maintainAspectRatio: false, plugins: {
+ legend: { display: false },
+ tooltip: { callbacks: { title: (items) =>{
+ const p = pesoHistorial[items[0].dataIndex];
+ return p ? dayjs(p.fecha).format('DD/MM') : '';
+ } } }
+ }, scales: { y: { ticks: { font: { size: 10 } } }, x: { ticks: { font: { size: 9 }, autoSkip: true, maxRotation: 0 } } } }
+ });
+ }, [pesoHistorial]);
 
  React.useEffect(() =>{
  if (!presionChartRef.current || presionHistorial.length === 0) return;
@@ -2182,8 +2237,9 @@
  const reg = presionHoy.find(p => p.momento === momento);
  items.push({ key: 'pa_' + momento, label: 'Presión arterial -- ' + momento, horario: null, hecho: !!reg, onToggle: () => abrirPresionModal(momento) });
  });
+ items.push({ key: 'peso', label: 'Peso diario', horario: null, hecho: !!pesoHoy, onToggle: () => abrirPesoModal() });
  return items.sort((a,b) =>(a.horario||'99:99').localeCompare(b.horario||'99:99'));
- }, [medicacionHorarioFijo, medTomasHoy, presionHoy]);
+ }, [medicacionHorarioFijo, medTomasHoy, presionHoy, pesoHoy]);
 
  // -- Salud: Historia Clínica -- timeline agregado de las 3 fuentes ---
  const historiaClinicaItems = React.useMemo(() =>{
@@ -2893,6 +2949,8 @@
  fetchTratamientos();
  fetchPresionHoy();
  fetchPresionHistorial();
+ fetchPesoHoy();
+ fetchPesoHistorial();
  fetchHistorialTomas();
  refreshPushStatus();
  }
@@ -3804,6 +3862,22 @@
  <Text type="secondary" style={{fontSize:11.5, display:'block', marginTop:10}}>Avisos automáticos a las 8:00, 15:00 y 22:00 -- si ya cargaste la medición de ese momento, no vuelve a avisar.</Text>
  </Card>
 
+ <Card className="premium-card" style={{marginTop:16}} title="Peso diario">
+ <Row gutter={16} style={{marginBottom:16}}>
+ <Col xs={24} sm={8}>
+ <div onClick={() => abrirPesoModal()} style={{border: '1px solid ' + (pesoHoy ? '#9fe3bb' : '#e6e9f0'), background: pesoHoy ? '#eafbf0' : '#f7f9fc', borderRadius:10, padding:'12px 14px', cursor:'pointer', textAlign:'center'}}>
+ <div style={{fontSize:12, color:'#8a93a3', textTransform:'uppercase'}}>Hoy</div>
+ {pesoHoy ? (
+ <div style={{fontSize:20, fontWeight:700, color:'#14213d'}}>{pesoHoy.peso_kg} kg</div>
+ ) : (
+ <div style={{fontSize:13, color:'#8a93a3', marginTop:6}}>Sin registrar -- tocar para cargar</div>
+ )}
+ </div>
+ </Col>
+ </Row>
+ {pesoHistorial.length > 0 && <div style={{height:220}}><canvas ref={pesoChartRef}></canvas></div>}
+ </Card>
+
  <Card className="premium-card" style={{marginTop:16}} title="Historial de medicación (últimos 30 días)">
  <Space size={32} style={{marginBottom:16}}>
  <div>
@@ -3837,6 +3911,14 @@
  <Col span={8}><Form.Item name="diastolica" label="Diastólica" rules={[{required:true}]}><InputNumber style={{width:'100%'}} min={30} max={180} /></Form.Item></Col>
  <Col span={8}><Form.Item name="pulso" label="Pulso"><InputNumber style={{width:'100%'}} min={30} max={220} /></Form.Item></Col>
  </Row>
+ <Form.Item name="notas" label="Notas"><Input.TextArea rows={2} /></Form.Item>
+ <Form.Item><Button type="primary" htmlType="submit" block>Guardar</Button></Form.Item>
+ </Form>
+ </Modal>
+
+ <Modal title="Peso diario" open={isPesoModalVisible} onCancel={() => setIsPesoModalVisible(false)} footer={null} destroyOnClose width={340}>
+ <Form form={pesoForm} layout="vertical" onFinish={handlePesoSubmit}>
+ <Form.Item name="peso_kg" label="Peso (kg)" rules={[{required:true}]}><InputNumber style={{width:'100%'}} min={20} max={300} step={0.1} /></Form.Item>
  <Form.Item name="notas" label="Notas"><Input.TextArea rows={2} /></Form.Item>
  <Form.Item><Button type="primary" htmlType="submit" block>Guardar</Button></Form.Item>
  </Form>
