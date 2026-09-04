@@ -1937,7 +1937,26 @@
  // horarios cargados son "de horario fijo"; los que tienen horarios
  // vacío son PRN -- si además tienen max_diario, se muestran con
  // contador (+/-), si no, como check simple (Reliverán, Buche mágico).
- const seguimientoFecha = dayjs().format('YYYY-MM-DD');
+ // Antes esto era un `const` recalculado en cada render a partir del
+ // reloj real -- por eso no había forma de ver ni cargar retroactivamente
+ // un día anterior (ej: "anoche tomé los calmantes y no los tildé, y si
+ // los tildo hoy quedan cargados en el día de hoy"). Ahora es estado
+ // navegable, acotado a los últimos 7 días (a pedido de Carlos) para no
+ // dejar editar cualquier fecha del pasado sin límite.
+ const HOY_ISO = dayjs().format('YYYY-MM-DD');
+ const SEGUIMIENTO_DIAS_ATRAS = 7;
+ const seguimientoFechaMinima = dayjs().subtract(SEGUIMIENTO_DIAS_ATRAS, 'day').format('YYYY-MM-DD');
+ const [seguimientoFecha, setSeguimientoFecha] = React.useState(HOY_ISO);
+ const esSeguimientoHoy = seguimientoFecha === HOY_ISO;
+ const irDiaAnteriorSeguimiento = () =>{
+ const anterior = dayjs(seguimientoFecha).subtract(1, 'day').format('YYYY-MM-DD');
+ if (anterior >= seguimientoFechaMinima) setSeguimientoFecha(anterior);
+ };
+ const irDiaSiguienteSeguimiento = () =>{
+ const siguiente = dayjs(seguimientoFecha).add(1, 'day').format('YYYY-MM-DD');
+ if (siguiente <= HOY_ISO) setSeguimientoFecha(siguiente);
+ };
+ const irHoySeguimiento = () => setSeguimientoFecha(HOY_ISO);
  const [medTomasHoy, setMedTomasHoy] = React.useState([]);
  const [tratamientos, setTratamientos] = React.useState([]);
  const [presionHoy, setPresionHoy] = React.useState([]);
@@ -1981,6 +2000,17 @@
  const { data, error } = await supabase.from('salud_peso').select('*').gte('fecha', desde).order('fecha');
  if (!error && data) setPesoHistorial(data);
  };
+
+ // Vuelve a traer lo del día seleccionado cada vez que se navega con el
+ // selector de fecha del "Seguimiento diario" (ver seguimientoFecha más
+ // arriba). fetchTratamientos/fetchPresionHistorial/fetchPesoHistorial NO
+ // van acá -- son ventanas móviles independientes de la fecha elegida.
+ React.useEffect(() =>{
+ if (!isAuthenticated || !currentUser) return;
+ fetchMedTomasHoy();
+ fetchPresionHoy();
+ fetchPesoHoy();
+ }, [seguimientoFecha, isAuthenticated, currentUser]);
 
  const medicacionHorarioFijo = React.useMemo(() =>{
  const filas = [];
@@ -2229,6 +2259,13 @@
  // real en Salud, mismas funciones que usa la pestaña Seguimiento
  // diario -- así ambas pantallas quedan siempre sincronizadas.
  const chequeosSaludHoy = React.useMemo(() =>{
+ // medTomasHoy/presionHoy/pesoHoy ahora reflejan la fecha SELECCIONADA
+ // en el Seguimiento diario de Salud (no necesariamente hoy, ver
+ // seguimientoFecha). Esta tarjeta de Agenda es específicamente "de
+ // hoy" -- si Carlos está viendo/editando un día anterior en la otra
+ // pestaña, se oculta en vez de mostrar (y dejar tildar) datos de otro
+ // día bajo el título "de hoy".
+ if (!esSeguimientoHoy) return [];
  const items = [];
  medicacionHorarioFijo.forEach(({med, horario}) =>{
  items.push({ key: 'med_' + med.id + '_' + horario, label: med.nombre + (med.dosis ? ' -- ' + med.dosis : ''), horario, hecho: !!tomaDeHorario(med.id, horario), onToggle: () => toggleTomaHorario(med, horario) });
@@ -2239,7 +2276,7 @@
  });
  items.push({ key: 'peso', label: 'Peso diario', horario: null, hecho: !!pesoHoy, onToggle: () => abrirPesoModal() });
  return items.sort((a,b) =>(a.horario||'99:99').localeCompare(b.horario||'99:99'));
- }, [medicacionHorarioFijo, medTomasHoy, presionHoy, pesoHoy]);
+ }, [medicacionHorarioFijo, medTomasHoy, presionHoy, pesoHoy, esSeguimientoHoy]);
 
  // -- Salud: Historia Clínica -- timeline agregado de las 3 fuentes ---
  const historiaClinicaItems = React.useMemo(() =>{
@@ -2945,11 +2982,11 @@
  fetchSaludMedicacion();
  fetchSaludTurnos();
  fetchHistoriaDoc();
- fetchMedTomasHoy();
+ // fetchMedTomasHoy/fetchPresionHoy/fetchPesoHoy quedaron a cargo del
+ // useEffect atado a [seguimientoFecha] (más abajo), que también corre
+ // al montar -- se sacaron de acá para no duplicar el fetch inicial.
  fetchTratamientos();
- fetchPresionHoy();
  fetchPresionHistorial();
- fetchPesoHoy();
  fetchPesoHistorial();
  fetchHistorialTomas();
  refreshPushStatus();
@@ -3765,7 +3802,16 @@
  <Tabs activeKey={saludActiveTab} onChange={setSaludActiveTab} items={[
  { key: 'seguimiento', label: 'Seguimiento diario', children: (
  <>
- <Card className="premium-card" style={{marginBottom:16}} title="Medicación de hoy">
+ <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:14, marginBottom:16, padding:'8px 12px', background: esSeguimientoHoy ? '#f7f9fc' : '#fff7e6', borderRadius:10, border: '1px solid ' + (esSeguimientoHoy ? '#e6e9f0' : '#ffd591')}}>
+ <Button size="small" shape="circle" disabled={seguimientoFecha <= seguimientoFechaMinima} onClick={irDiaAnteriorSeguimiento}>‹</Button>
+ <div style={{textAlign:'center', minWidth:170}}>
+ <div style={{fontWeight:700, fontSize:14, textTransform:'capitalize'}}>{esSeguimientoHoy ? 'Hoy' : dayjs(seguimientoFecha).format('dddd DD/MM')}</div>
+ {!esSeguimientoHoy && <div style={{fontSize:11, color:'#8a5c00'}}>Viendo/editando un día anterior -- {dayjs(seguimientoFecha).format('DD/MM/YYYY')}</div>}
+ </div>
+ <Button size="small" shape="circle" disabled={seguimientoFecha >= HOY_ISO} onClick={irDiaSiguienteSeguimiento}>›</Button>
+ {!esSeguimientoHoy && <Button size="small" type="link" onClick={irHoySeguimiento}>Volver a hoy</Button>}
+ </div>
+ <Card className="premium-card" style={{marginBottom:16}} title={esSeguimientoHoy ? 'Medicación de hoy' : 'Medicación -- ' + dayjs(seguimientoFecha).format('DD/MM')}>
  <div style={{fontWeight:700, fontSize:12, color:'#888', textTransform:'uppercase', marginBottom:8}}>Horario fijo</div>
  {medicacionHorarioFijo.length === 0 ? <Empty description="Sin medicación de horario fijo" /> : (
  <div style={{display:'flex', flexDirection:'column', gap:8, marginBottom:20}}>
@@ -3829,7 +3875,7 @@
  <Tag color="orange">{t.fecha_inicio ? 'Esperando turno -- arranca ' + dayjs(t.fecha_inicio).format('DD/MM') : 'Esperando turno para comenzar'}</Tag>
  ) : (
  <Button size="small" type="primary" disabled={yaHoy || sesiones.length >= t.sesiones_totales} onClick={() => abrirSesionModal(t)}>
- {yaHoy ? 'Sesión de hoy ya marcada' : t.estado === 'completado' ? 'Tratamiento completado' : 'Marcar sesión de hoy'}
+ {yaHoy ? (esSeguimientoHoy ? 'Sesión de hoy ya marcada' : 'Sesión de ese día ya marcada') : t.estado === 'completado' ? 'Tratamiento completado' : (esSeguimientoHoy ? 'Marcar sesión de hoy' : 'Marcar sesión de ' + dayjs(seguimientoFecha).format('DD/MM'))}
  </Button>
  )}
  </div>
@@ -3866,7 +3912,7 @@
  <Row gutter={16} style={{marginBottom:16}}>
  <Col xs={24} sm={8}>
  <div onClick={() => abrirPesoModal()} style={{border: '1px solid ' + (pesoHoy ? '#9fe3bb' : '#e6e9f0'), background: pesoHoy ? '#eafbf0' : '#f7f9fc', borderRadius:10, padding:'12px 14px', cursor:'pointer', textAlign:'center'}}>
- <div style={{fontSize:12, color:'#8a93a3', textTransform:'uppercase'}}>Hoy</div>
+ <div style={{fontSize:12, color:'#8a93a3', textTransform:'uppercase'}}>{esSeguimientoHoy ? 'Hoy' : dayjs(seguimientoFecha).format('DD/MM')}</div>
  {pesoHoy ? (
  <div style={{fontSize:20, fontWeight:700, color:'#14213d'}}>{pesoHoy.peso_kg} kg</div>
  ) : (
