@@ -1945,7 +1945,6 @@
  // dejar editar cualquier fecha del pasado sin límite.
  const HOY_ISO = dayjs().format('YYYY-MM-DD');
  const SEGUIMIENTO_DIAS_ATRAS = 7;
- const seguimientoFechaMinima = dayjs().subtract(SEGUIMIENTO_DIAS_ATRAS, 'day').format('YYYY-MM-DD');
  const [seguimientoFecha, setSeguimientoFecha] = React.useState(HOY_ISO);
  const esSeguimientoHoy = seguimientoFecha === HOY_ISO;
  const irDiaAnteriorSeguimiento = () =>{
@@ -1959,6 +1958,19 @@
  const irHoySeguimiento = () => setSeguimientoFecha(HOY_ISO);
  const [medTomasHoy, setMedTomasHoy] = React.useState([]);
  const [tratamientos, setTratamientos] = React.useState([]);
+ // Fase revisión de sesiones -- el tope de "7 días atrás" alcanza para
+ // corregir una toma de medicación olvidada, pero un tratamiento de
+ // Radio/Quimio puede haber empezado mucho antes. Para poder revisar y
+ // corregir sesiones pasadas de forma cronológica desde el inicio real
+ // del tratamiento, el mínimo navegable es el que sea MÁS ANTIGUO entre
+ // "hoy - 7" y la fecha de inicio del tratamiento más viejo cargado.
+ const fechaInicioTratamientoMasAntigua = tratamientos.reduce((min, t) => {
+ if (!t.fecha_inicio) return min;
+ return (!min || t.fecha_inicio < min) ? t.fecha_inicio : min;
+ }, null);
+ const seguimientoFechaMinima = (fechaInicioTratamientoMasAntigua && fechaInicioTratamientoMasAntigua < dayjs().subtract(SEGUIMIENTO_DIAS_ATRAS, 'day').format('YYYY-MM-DD'))
+ ? fechaInicioTratamientoMasAntigua
+ : dayjs().subtract(SEGUIMIENTO_DIAS_ATRAS, 'day').format('YYYY-MM-DD');
  const [presionHoy, setPresionHoy] = React.useState([]);
  const [presionHistorial, setPresionHistorial] = React.useState([]);
  const [isPresionModalVisible, setIsPresionModalVisible] = React.useState(false);
@@ -1979,7 +1991,9 @@
  if (!error && data) setMedTomasHoy(data);
  };
  const fetchTratamientos = async () =>{
- const { data, error } = await supabase.from('salud_tratamientos').select('*, salud_tratamiento_sesiones(id, fecha)').eq('activo', true).order('id');
+ // select ampliado (antes solo id,fecha) para poder precargar el diálogo
+ // de sesión cuando se reabre una ya existente para editarla.
+ const { data, error } = await supabase.from('salud_tratamientos').select('*, salud_tratamiento_sesiones(id, fecha, estado_general, cansancio, nauseas, drogas_aplicadas, notas)').eq('activo', true).order('id');
  if (!error && data) setTratamientos(data);
  };
  const fetchPresionHoy = async () =>{
@@ -2055,14 +2069,25 @@
  // van variando sesión a sesión, no solo el conteo 1/35.
  const [isSesionModalVisible, setIsSesionModalVisible] = React.useState(false);
  const [sesionTratamientoEditando, setSesionTratamientoEditando] = React.useState(null);
+ // Fase revisión de sesiones -- si hay una sesión ya cargada para la
+ // fecha seleccionada, acá guardamos su id: handleSesionSubmit hace
+ // UPDATE en vez de INSERT, y el modal arranca precargado con sus
+ // datos en vez de vacío. null = se está creando una sesión nueva.
+ const [sesionEditandoId, setSesionEditandoId] = React.useState(null);
  const [sesionForm] = Form.useForm();
 
  const abrirSesionModal = (trat) =>{
  const sesiones = trat.salud_tratamiento_sesiones || [];
- const yaHoy = sesiones.some(s => s.fecha === seguimientoFecha);
- if (yaHoy || sesiones.length >= trat.sesiones_totales) return;
+ const sesionDeEsteDia = sesiones.find(s => s.fecha === seguimientoFecha);
+ // Si NO hay sesión de este día y ya se llegó al total, no se puede
+ // cargar una sesión nueva -- pero si SÍ hay una sesión de este día,
+ // siempre se puede reabrir para editarla/corregirla, sin importar el
+ // total (editar no agrega una sesión nueva).
+ if (!sesionDeEsteDia && sesiones.length >= trat.sesiones_totales) return;
  setSesionTratamientoEditando(trat);
+ setSesionEditandoId(sesionDeEsteDia ? sesionDeEsteDia.id : null);
  sesionForm.resetFields();
+ if (sesionDeEsteDia) sesionForm.setFieldsValue(sesionDeEsteDia);
  setIsSesionModalVisible(true);
  };
 
@@ -2079,14 +2104,23 @@
  drogas_aplicadas: values.drogas_aplicadas || null,
  notas: values.notas || null,
  };
+ if (sesionEditandoId) {
+ // Editar una sesión ya existente -- no cambia el conteo ni el
+ // estado del tratamiento, solo corrige los datos de ese día.
+ const { error } = await supabase.from('salud_tratamiento_sesiones').update(payload).eq('id', sesionEditandoId);
+ if (error) { message.error('No se pudo actualizar la sesión: ' + error.message); return; }
+ message.success('Sesión de ' + trat.nombre + ' actualizada.');
+ } else {
  const { error } = await supabase.from('salud_tratamiento_sesiones').insert([payload]);
  if (error) { message.error('No se pudo registrar la sesión: ' + error.message); return; }
  const nuevoTotal = sesiones.length + 1;
  const nuevoEstado = nuevoTotal >= trat.sesiones_totales ? 'completado' : 'en_curso';
  if (nuevoEstado !== trat.estado) await supabase.from('salud_tratamientos').update({ estado: nuevoEstado }).eq('id', trat.id);
  message.success('Sesión de ' + trat.nombre + ' registrada.');
+ }
  setIsSesionModalVisible(false);
  setSesionTratamientoEditando(null);
+ setSesionEditandoId(null);
  fetchTratamientos();
  };
 
@@ -3856,7 +3890,7 @@
  <Row gutter={16}>
  {tratamientos.map(t =>{
  const sesiones = t.salud_tratamiento_sesiones || [];
- const yaHoy = sesiones.some(s => s.fecha === seguimientoFecha);
+ const sesionDeEsteDia = sesiones.find(s => s.fecha === seguimientoFecha);
  const percent = Math.min(100, (sesiones.length / t.sesiones_totales) * 100);
  // Si ya se cargó una fecha de inicio (turno confirmado), el "esperando
  // turno" se levanta solo el día que llega -- no hace falta que alguien
@@ -3874,8 +3908,17 @@
  {esperandoTurno ? (
  <Tag color="orange">{t.fecha_inicio ? 'Esperando turno -- arranca ' + dayjs(t.fecha_inicio).format('DD/MM') : 'Esperando turno para comenzar'}</Tag>
  ) : (
- <Button size="small" type="primary" disabled={yaHoy || sesiones.length >= t.sesiones_totales} onClick={() => abrirSesionModal(t)}>
- {yaHoy ? (esSeguimientoHoy ? 'Sesión de hoy ya marcada' : 'Sesión de ese día ya marcada') : t.estado === 'completado' ? 'Tratamiento completado' : (esSeguimientoHoy ? 'Marcar sesión de hoy' : 'Marcar sesión de ' + dayjs(seguimientoFecha).format('DD/MM'))}
+ <Button
+ size="small"
+ type={sesionDeEsteDia ? 'default' : 'primary'}
+ disabled={!sesionDeEsteDia && (t.estado === 'completado' || sesiones.length >= t.sesiones_totales)}
+ onClick={() => abrirSesionModal(t)}
+ >
+ {sesionDeEsteDia
+ ? (esSeguimientoHoy ? 'Editar sesión de hoy' : 'Editar sesión de ' + dayjs(seguimientoFecha).format('DD/MM'))
+ : t.estado === 'completado'
+ ? 'Tratamiento completado'
+ : (esSeguimientoHoy ? 'Marcar sesión de hoy' : 'Marcar sesión de ' + dayjs(seguimientoFecha).format('DD/MM'))}
  </Button>
  )}
  </div>
@@ -3970,7 +4013,7 @@
  </Form>
  </Modal>
 
- <Modal title={'Sesión de ' + (sesionTratamientoEditando?.nombre || '') + ' -- ¿cómo llegaste?'} open={isSesionModalVisible} onCancel={() =>{ setIsSesionModalVisible(false); setSesionTratamientoEditando(null); }} footer={null} destroyOnClose width={400}>
+ <Modal title={(sesionEditandoId ? 'Editar sesión de ' : 'Sesión de ') + (sesionTratamientoEditando?.nombre || '') + (sesionEditandoId ? '' : ' -- ¿cómo llegaste?')} open={isSesionModalVisible} onCancel={() =>{ setIsSesionModalVisible(false); setSesionTratamientoEditando(null); setSesionEditandoId(null); }} footer={null} destroyOnClose width={400}>
  <Form form={sesionForm} layout="vertical" onFinish={handleSesionSubmit}>
  <Form.Item name="estado_general" label="Estado general">
  <Radio.Group optionType="button" buttonStyle="solid" options={[
@@ -3992,7 +4035,7 @@
  <Form.Item name="drogas_aplicadas" label="Drogas aplicadas"><Input.TextArea rows={2} placeholder="Qué te aplicaron hoy" /></Form.Item>
  )}
  <Form.Item name="notas" label="Notas (piel, dolor, lo que sea)"><Input.TextArea rows={2} placeholder="Opcional -- cualquier otra cosa que quieras dejar anotada" /></Form.Item>
- <Form.Item><Button type="primary" htmlType="submit" block>Guardar y marcar sesión</Button></Form.Item>
+ <Form.Item><Button type="primary" htmlType="submit" block>{sesionEditandoId ? 'Guardar cambios' : 'Guardar y marcar sesión'}</Button></Form.Item>
  </Form>
  </Modal>
  </>
