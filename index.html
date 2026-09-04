@@ -2074,17 +2074,57 @@
  // UPDATE en vez de INSERT, y el modal arranca precargado con sus
  // datos en vez de vacío. null = se está creando una sesión nueva.
  const [sesionEditandoId, setSesionEditandoId] = React.useState(null);
+ // Fase cronograma -- la fecha ya NO sale del navegador global de
+ // Seguimiento diario (seguimientoFecha): cada tratamiento tiene su
+ // propio cronograma de sesiones esperadas (ver calcularFechasSesion /
+ // sesionIndiceSeleccionado más abajo), y acá se guarda cuál de esas
+ // fechas programadas es la que se está cargando/editando.
+ const [sesionFechaEditando, setSesionFechaEditando] = React.useState(null);
  const [sesionForm] = Form.useForm();
 
- const abrirSesionModal = (trat) =>{
+ // Fase cronograma -- antes se navegaba día a día por calendario (con
+ // el mismo selector que Medicación), pero eso obligaba a pasar por
+ // fines de semana sin sesión (Radioterapia) o por 6 días de más entre
+ // sesión y sesión (Quimioterapia, semanal). Ahora cada tratamiento
+ // arma su propia lista de fechas ESPERADAS a partir de fecha_inicio y
+ // frecuencia_sesion (columna nueva: 'diaria_habil' = un día hábil por
+ // sesión, saltea sábado/domingo; 'semanal' = cada 7 días, ej. los
+ // lunes de Quimio) -- así el ‹ › solo pasa por hitos reales del
+ // tratamiento, nunca por un día "vacío".
+ const calcularFechasSesion = (trat) =>{
+ const fechas = [];
+ let cursor = dayjs(trat.fecha_inicio);
+ if (trat.frecuencia_sesion === 'semanal') {
+ for (let i = 0; i < trat.sesiones_totales; i++) {
+ fechas.push(cursor.format('YYYY-MM-DD'));
+ cursor = cursor.add(7, 'day');
+ }
+ } else {
+ // default 'diaria_habil' -- por si algún tratamiento viejo no tiene
+ // el campo cargado, en vez de romper asume el caso más común.
+ while (fechas.length < trat.sesiones_totales) {
+ const diaSemana = cursor.day(); // 0 = domingo, 6 = sábado
+ if (diaSemana !== 0 && diaSemana !== 6) fechas.push(cursor.format('YYYY-MM-DD'));
+ cursor = cursor.add(1, 'day');
+ }
+ }
+ return fechas;
+ };
+ // { [tratamientoId]: indice } -- qué sesión del cronograma se está
+ // viendo en cada tarjeta. Si un tratamiento no tiene entrada acá
+ // todavía, se usa el default (la sesión actual/siguiente, ver JSX).
+ const [sesionIndiceSeleccionado, setSesionIndiceSeleccionado] = React.useState({});
+
+ const abrirSesionModal = (trat, fecha) =>{
  const sesiones = trat.salud_tratamiento_sesiones || [];
- const sesionDeEsteDia = sesiones.find(s => s.fecha === seguimientoFecha);
- // Si NO hay sesión de este día y ya se llegó al total, no se puede
- // cargar una sesión nueva -- pero si SÍ hay una sesión de este día,
- // siempre se puede reabrir para editarla/corregirla, sin importar el
- // total (editar no agrega una sesión nueva).
+ const sesionDeEsteDia = sesiones.find(s => s.fecha === fecha);
+ // Si NO hay sesión de esta fecha programada y ya se llegó al total,
+ // no se puede cargar una sesión nueva -- pero si SÍ hay una sesión
+ // ya cargada para esa fecha, siempre se puede reabrir para
+ // editarla/corregirla (editar no agrega una sesión nueva).
  if (!sesionDeEsteDia && sesiones.length >= trat.sesiones_totales) return;
  setSesionTratamientoEditando(trat);
+ setSesionFechaEditando(fecha);
  setSesionEditandoId(sesionDeEsteDia ? sesionDeEsteDia.id : null);
  sesionForm.resetFields();
  if (sesionDeEsteDia) sesionForm.setFieldsValue(sesionDeEsteDia);
@@ -2097,7 +2137,7 @@
  const sesiones = trat.salud_tratamiento_sesiones || [];
  const payload = {
  tratamiento_id: trat.id,
- fecha: seguimientoFecha,
+ fecha: sesionFechaEditando,
  estado_general: values.estado_general || null,
  cansancio: values.cansancio || null,
  nauseas: values.nauseas || false,
@@ -2121,6 +2161,7 @@
  setIsSesionModalVisible(false);
  setSesionTratamientoEditando(null);
  setSesionEditandoId(null);
+ setSesionFechaEditando(null);
  fetchTratamientos();
  };
 
@@ -3890,13 +3931,26 @@
  <Row gutter={16}>
  {tratamientos.map(t =>{
  const sesiones = t.salud_tratamiento_sesiones || [];
- const sesionDeEsteDia = sesiones.find(s => s.fecha === seguimientoFecha);
+ const fechasProgramadas = calcularFechasSesion(t);
+ // Default: la sesión "actual" (la siguiente pendiente, o la última si
+ // ya se completaron todas) -- desde ahí Carlos puede ir para atrás con
+ // ‹ a revisar/corregir cualquier sesión anterior del cronograma.
+ const indiceDefault = Math.min(sesiones.length, t.sesiones_totales - 1);
+ const indiceSesion = sesionIndiceSeleccionado[t.id] ?? indiceDefault;
+ const fechaSesionSeleccionada = fechasProgramadas[indiceSesion];
+ const sesionDeEstaFecha = sesiones.find(s => s.fecha === fechaSesionSeleccionada);
  const percent = Math.min(100, (sesiones.length / t.sesiones_totales) * 100);
- // Si ya se cargó una fecha de inicio (turno confirmado), el "esperando
- // turno" se levanta solo el día que llega -- no hace falta que alguien
- // entre a cambiar el estado a mano. Sin fecha_inicio cargada, se queda
- // esperando como antes.
- const esperandoTurno = t.estado === 'esperando_turno' && (!t.fecha_inicio || seguimientoFecha < t.fecha_inicio);
+ // "Esperando turno" es sobre el estado REAL del tratamiento (si hoy
+ // todavía no llegó la fecha de inicio) -- ya no depende de qué sesión
+ // del cronograma se esté mirando.
+ const esperandoTurno = t.estado === 'esperando_turno' && (!t.fecha_inicio || HOY_ISO < t.fecha_inicio);
+ const cambiarIndiceSesion = (delta) =>{
+ setSesionIndiceSeleccionado(prev =>{
+ const actual = prev[t.id] ?? indiceDefault;
+ const nuevo = Math.min(Math.max(actual + delta, 0), t.sesiones_totales - 1);
+ return { ...prev, [t.id]: nuevo };
+ });
+ };
  return (
  <Col xs={24} sm={12} key={t.id} style={{marginBottom:16}}>
  <div style={{border:'1px solid #e6e9f0', borderRadius:12, padding:16, height:'100%'}}>
@@ -3908,18 +3962,31 @@
  {esperandoTurno ? (
  <Tag color="orange">{t.fecha_inicio ? 'Esperando turno -- arranca ' + dayjs(t.fecha_inicio).format('DD/MM') : 'Esperando turno para comenzar'}</Tag>
  ) : (
+ <>
+ {/* Cronograma propio del tratamiento -- un paso = una sesión
+ esperada real (día hábil para Radio, semanal para Quimio),
+ nunca un día "vacío" sin sesión. */}
+ <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:8, marginBottom:10}}>
+ <Button size="small" shape="circle" disabled={indiceSesion <= 0} onClick={() => cambiarIndiceSesion(-1)}>‹</Button>
+ <span style={{fontSize:12.5, minWidth:150, textAlign:'center', color:'#6b7280'}}>
+ Sesión {indiceSesion + 1}/{t.sesiones_totales} -- {dayjs(fechaSesionSeleccionada).format('ddd DD/MM')}
+ </span>
+ <Button size="small" shape="circle" disabled={indiceSesion >= t.sesiones_totales - 1} onClick={() => cambiarIndiceSesion(1)}>›</Button>
+ </div>
  <Button
  size="small"
- type={sesionDeEsteDia ? 'default' : 'primary'}
- disabled={!sesionDeEsteDia && (t.estado === 'completado' || sesiones.length >= t.sesiones_totales)}
- onClick={() => abrirSesionModal(t)}
+ type={sesionDeEstaFecha ? 'default' : 'primary'}
+ block
+ disabled={!sesionDeEstaFecha && t.estado === 'completado'}
+ onClick={() => abrirSesionModal(t, fechaSesionSeleccionada)}
  >
- {sesionDeEsteDia
- ? (esSeguimientoHoy ? 'Editar sesión de hoy' : 'Editar sesión de ' + dayjs(seguimientoFecha).format('DD/MM'))
+ {sesionDeEstaFecha
+ ? 'Editar sesión del ' + dayjs(fechaSesionSeleccionada).format('DD/MM')
  : t.estado === 'completado'
  ? 'Tratamiento completado'
- : (esSeguimientoHoy ? 'Marcar sesión de hoy' : 'Marcar sesión de ' + dayjs(seguimientoFecha).format('DD/MM'))}
+ : 'Marcar sesión del ' + dayjs(fechaSesionSeleccionada).format('DD/MM')}
  </Button>
+ </>
  )}
  </div>
  </Col>
@@ -4013,7 +4080,7 @@
  </Form>
  </Modal>
 
- <Modal title={(sesionEditandoId ? 'Editar sesión de ' : 'Sesión de ') + (sesionTratamientoEditando?.nombre || '') + (sesionEditandoId ? '' : ' -- ¿cómo llegaste?')} open={isSesionModalVisible} onCancel={() =>{ setIsSesionModalVisible(false); setSesionTratamientoEditando(null); setSesionEditandoId(null); }} footer={null} destroyOnClose width={400}>
+ <Modal title={(sesionEditandoId ? 'Editar sesión de ' : 'Sesión de ') + (sesionTratamientoEditando?.nombre || '') + (sesionEditandoId ? '' : ' -- ¿cómo llegaste?')} open={isSesionModalVisible} onCancel={() =>{ setIsSesionModalVisible(false); setSesionTratamientoEditando(null); setSesionEditandoId(null); setSesionFechaEditando(null); }} footer={null} destroyOnClose width={400}>
  <Form form={sesionForm} layout="vertical" onFinish={handleSesionSubmit}>
  <Form.Item name="estado_general" label="Estado general">
  <Radio.Group optionType="button" buttonStyle="solid" options={[
