@@ -2026,12 +2026,24 @@
  fetchPesoHoy();
  }, [seguimientoFecha, isAuthenticated, currentUser]);
 
+ // Vigente en seguimientoFecha: activo Y la fecha del día que se está
+ // viendo cae dentro de [fecha_inicio, fecha_fin] (fecha_fin null =
+ // "Continúa", sin límite). Mismo chequeo que ya usa historialDias más
+ // abajo -- antes esto sólo miraba `activo`, por eso un medicamento con
+ // fecha_fin ya vencida (ej. Dasentron, HASTA 08/09) seguía apareciendo
+ // en "Medicación de hoy" el día después de terminado.
+ const medicacionVigente = (m, fecha) =>{
+ if (!m.activo) return false;
+ if (m.fecha_inicio && m.fecha_inicio > fecha) return false;
+ if (m.fecha_fin && m.fecha_fin < fecha) return false;
+ return true;
+ };
  const medicacionHorarioFijo = React.useMemo(() =>{
  const filas = [];
- saludMedicacion.filter(m => m.activo).forEach(m => (m.horarios || []).forEach(h => filas.push({ med: m, horario: String(h).slice(0,5) })));
+ saludMedicacion.filter(m => medicacionVigente(m, seguimientoFecha)).forEach(m => (m.horarios || []).forEach(h => filas.push({ med: m, horario: String(h).slice(0,5) })));
  return filas.sort((a,b) => a.horario.localeCompare(b.horario));
- }, [saludMedicacion]);
- const medicacionPrn = React.useMemo(() => saludMedicacion.filter(m => m.activo && (!m.horarios || m.horarios.length === 0)), [saludMedicacion]);
+ }, [saludMedicacion, seguimientoFecha]);
+ const medicacionPrn = React.useMemo(() => saludMedicacion.filter(m => medicacionVigente(m, seguimientoFecha) && (!m.horarios || m.horarios.length === 0)), [saludMedicacion, seguimientoFecha]);
 
  const tomaDeHorario = (medId, horario) => medTomasHoy.find(t => t.medicacion_id === medId && t.hora && t.hora.slice(0,5) === horario);
  const tomaSimplePrn = (medId) => medTomasHoy.find(t => t.medicacion_id === medId && !t.hora);
