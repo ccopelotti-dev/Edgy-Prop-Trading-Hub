@@ -2101,6 +2101,11 @@
  const [sesionFechaEditando, setSesionFechaEditando] = React.useState(null);
  const [sesionForm] = Form.useForm();
 
+ // Días en que el centro no atiende aunque sea día hábil (feriados
+ // puntuales) -- se excluyen del cronograma 'diaria_habil'. Agregar acá
+ // cualquier feriado nuevo que se confirme (formato YYYY-MM-DD).
+ const FERIADOS_SESION = ['2026-09-21']; // Día de la Sanidad
+
  // Fase cronograma -- antes se navegaba día a día por calendario (con
  // el mismo selector que Medicación), pero eso obligaba a pasar por
  // fines de semana sin sesión (Radioterapia) o por 6 días de más entre
@@ -2123,7 +2128,9 @@
  // el campo cargado, en vez de romper asume el caso más común.
  while (fechas.length < trat.sesiones_totales) {
  const diaSemana = cursor.day(); // 0 = domingo, 6 = sábado
- if (diaSemana !== 0 && diaSemana !== 6) fechas.push(cursor.format('YYYY-MM-DD'));
+ const esFinDeSemana = diaSemana === 0 || diaSemana === 6;
+ const esFeriado = FERIADOS_SESION.includes(cursor.format('YYYY-MM-DD'));
+ if (!esFinDeSemana && !esFeriado) fechas.push(cursor.format('YYYY-MM-DD'));
  cursor = cursor.add(1, 'day');
  }
  }
