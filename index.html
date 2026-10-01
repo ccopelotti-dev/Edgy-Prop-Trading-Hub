@@ -2106,6 +2106,16 @@
  // cualquier feriado nuevo que se confirme (formato YYYY-MM-DD).
  const FERIADOS_SESION = ['2026-09-21']; // Día de la Sanidad
 
+ // Sesiones reprogramadas a mano -- cuando una sesión real se corre de
+ // la fecha que daría el cálculo automático (ej. el médico la pasa para
+ // otra semana), se anota acá: { [tratamiento_id]: { [índice 0-based
+ // dentro del cronograma]: 'YYYY-MM-DD' } }. Sólo pisa esas posiciones
+ // puntuales, no afecta el resto del cronograma ni las sesiones ya
+ // cargadas.
+ const SESIONES_REPROGRAMADAS = {
+ 2: { 4: '2026-10-07', 5: '2026-10-14' }, // Quimioterapia: sesión 5 -> 07/10, sesión 6 -> 14/10
+ };
+
  // Fase cronograma -- antes se navegaba día a día por calendario (con
  // el mismo selector que Medicación), pero eso obligaba a pasar por
  // fines de semana sin sesión (Radioterapia) o por 6 días de más entre
@@ -2133,6 +2143,12 @@
  if (!esFinDeSemana && !esFeriado) fechas.push(cursor.format('YYYY-MM-DD'));
  cursor = cursor.add(1, 'day');
  }
+ }
+ const overrides = SESIONES_REPROGRAMADAS[trat.id];
+ if (overrides) {
+ Object.entries(overrides).forEach(([indice, fecha]) =>{
+ fechas[Number(indice)] = fecha;
+ });
  }
  return fechas;
  };
